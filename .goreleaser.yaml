@@ -1,0 +1,30 @@
+# GoReleaser config for the published monedula-sim-link repository (see
+# .github/workflows/release.yml). Check it locally with `goreleaser check`, or
+# dry-run a build with `goreleaser release --snapshot --clean`.
+version: 2
+
+builds:
+  - main: ./cmd/monedula-sim-link
+    binary: monedula-sim-link
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{ .Tag }}
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+      - docs/*
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github

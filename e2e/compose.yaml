@@ -1,0 +1,69 @@
+# Three-node KRaft cluster (each node is broker + controller) for the e2e
+# suite. The image is chosen per run, so the same topology covers Apache Kafka
+# and Confluent Platform:
+#
+#   KAFKA_IMAGE=apache/kafka:4.3.1          docker compose -f e2e/compose.yaml up -d
+#   KAFKA_IMAGE=confluentinc/cp-kafka:8.3.2 docker compose -f e2e/compose.yaml up -d
+#   KAFKA_IMAGE=confluentinc/cp-server:8.3.2 ...
+#
+# All three images read KAFKA_* variables as broker properties
+# (KAFKA_NODE_ID -> node.id) and CLUSTER_ID to format storage. Clients reach
+# the nodes on localhost:19092 / 29092 / 39092. Each node sits on its own rack
+# so the snapshot's rack field is exercised, and auto.create.topics.enable is
+# on so the read-only test can prove the tool never creates a topic.
+name: monedula-sim-link-e2e
+
+x-kafka-env: &kafka-env
+  CLUSTER_ID: bW9uZWR1bGEtc2ltLWxpbms
+  KAFKA_PROCESS_ROLES: broker,controller
+  KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093
+  KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+  KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+  KAFKA_LISTENERS: CONTROLLER://:9093,INTERNAL://:9092,EXTERNAL://:19092
+  KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+  KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+  KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "3"
+  KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "3"
+  KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "2"
+  # Fence a stopped node quickly, so the offline-broker test does not wait
+  # out the default 9s session.
+  KAFKA_BROKER_SESSION_TIMEOUT_MS: "6000"
+  KAFKA_BROKER_HEARTBEAT_INTERVAL_MS: "1000"
+  # Confluent Server only (ignored as unknown properties elsewhere): run on
+  # the built-in trial license and keep its extras off.
+  KAFKA_CONFLUENT_LICENSE_TOPIC_REPLICATION_FACTOR: "3"
+  KAFKA_CONFLUENT_BALANCER_ENABLE: "false"
+  KAFKA_CONFLUENT_REPORTERS_TELEMETRY_AUTO_ENABLE: "false"
+
+services:
+  kafka-1:
+    image: ${KAFKA_IMAGE:-apache/kafka:4.3.1}
+    hostname: kafka-1
+    ports: ["19092:19092"]
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: "1"
+      KAFKA_BROKER_RACK: rack-a
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-1:9092,EXTERNAL://localhost:19092
+
+  kafka-2:
+    image: ${KAFKA_IMAGE:-apache/kafka:4.3.1}
+    hostname: kafka-2
+    ports: ["29092:19092"]
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: "2"
+      KAFKA_BROKER_RACK: rack-b
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-2:9092,EXTERNAL://localhost:29092
+
+  kafka-3:
+    image: ${KAFKA_IMAGE:-apache/kafka:4.3.1}
+    hostname: kafka-3
+    ports: ["39092:19092"]
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: "3"
+      KAFKA_BROKER_RACK: rack-c
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-3:9092,EXTERNAL://localhost:39092

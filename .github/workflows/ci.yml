@@ -1,0 +1,50 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go vet ./...
+      - run: go vet -tags e2e ./e2e/
+      - run: go test ./...
+
+  # The same suite against a real three-node KRaft cluster, once per image:
+  # Apache Kafka, Confluent Platform community (cp-kafka) and Confluent Server
+  # (cp-server, on its built-in trial license). Two releases each for Apache
+  # Kafka and cp-kafka: the current one and the previous line still in wide use.
+  e2e:
+    name: e2e (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - apache/kafka:4.3.1
+          - apache/kafka:3.9.2
+          - confluentinc/cp-kafka:8.3.2
+          - confluentinc/cp-kafka:7.9.10
+          - confluentinc/cp-server:8.3.2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: e2e
+        env:
+          KAFKA_IMAGE: ${{ matrix.image }}
+        run: e2e/run.sh

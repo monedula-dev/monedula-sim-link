@@ -1,0 +1,157 @@
+# Ground truth generated from the website's TypeScript sources (2026-07-03)
+# by running the real functions via vitest and dumping their output:
+#   PLACEMENT <brokers> <partitions> <rf> <json replicas per partition>
+#     = src/sim/placement.ts assignRackAware() with brokers broker-1..broker-N
+#       all on the single synthetic rack 'single' (the free-play default path)
+#   HASH <key> <partitionCount> <partition>
+#     = src/sim/producer.ts partitionForKey()
+#   SIZE lines were used to pin mapping/size.go's slug fixtures (see size_test.go).
+#   The 2026-09-23 SIZE lines (KIP-1163 draft diskless.enable, v2.0+)
+#   were generated the same way, via decodeFreePlaySize/encodeFreePlaySize
+#   round-tripped on hand-built FreePlaySize objects (not hand-crafted slugs).
+PLACEMENT 3 3 3 [["broker-1","broker-2","broker-3"],["broker-2","broker-3","broker-1"],["broker-3","broker-1","broker-2"]]
+PLACEMENT 9 3 3 [["broker-1","broker-2","broker-3"],["broker-2","broker-3","broker-4"],["broker-3","broker-4","broker-5"]]
+PLACEMENT 6 4 3 [["broker-1","broker-2","broker-3"],["broker-2","broker-3","broker-4"],["broker-3","broker-4","broker-5"],["broker-4","broker-5","broker-6"]]
+PLACEMENT 10 12 3 [["broker-1","broker-10","broker-2"],["broker-10","broker-2","broker-3"],["broker-2","broker-3","broker-4"],["broker-3","broker-4","broker-5"],["broker-4","broker-5","broker-6"],["broker-5","broker-6","broker-7"],["broker-6","broker-7","broker-8"],["broker-7","broker-8","broker-9"],["broker-8","broker-9","broker-1"],["broker-9","broker-1","broker-10"],["broker-1","broker-2","broker-3"],["broker-10","broker-3","broker-4"]]
+PLACEMENT 5 7 2 [["broker-1","broker-2"],["broker-2","broker-3"],["broker-3","broker-4"],["broker-4","broker-5"],["broker-5","broker-1"],["broker-1","broker-3"],["broker-2","broker-4"]]
+PLACEMENT 4 24 4 [["broker-1","broker-2","broker-3","broker-4"],["broker-2","broker-3","broker-4","broker-1"],["broker-3","broker-4","broker-1","broker-2"],["broker-4","broker-1","broker-2","broker-3"],["broker-1","broker-3","broker-4","broker-2"],["broker-2","broker-4","broker-1","broker-3"],["broker-3","broker-1","broker-2","broker-4"],["broker-4","broker-2","broker-3","broker-1"],["broker-1","broker-4","broker-2","broker-3"],["broker-2","broker-1","broker-3","broker-4"],["broker-3","broker-2","broker-4","broker-1"],["broker-4","broker-3","broker-1","broker-2"],["broker-1","broker-2","broker-3","broker-4"],["broker-2","broker-3","broker-4","broker-1"],["broker-3","broker-4","broker-1","broker-2"],["broker-4","broker-1","broker-2","broker-3"],["broker-1","broker-3","broker-4","broker-2"],["broker-2","broker-4","broker-1","broker-3"],["broker-3","broker-1","broker-2","broker-4"],["broker-4","broker-2","broker-3","broker-1"],["broker-1","broker-4","broker-2","broker-3"],["broker-2","broker-1","broker-3","broker-4"],["broker-3","broker-2","broker-4","broker-1"],["broker-4","broker-3","broker-1","broker-2"]]
+PLACEMENT 1 3 1 [["broker-1"],["broker-1"],["broker-1"]]
+PLACEMENT 10 24 10 [["broker-1","broker-10","broker-2","broker-3","broker-4","broker-5","broker-6","broker-7","broker-8","broker-9"],["broker-10","broker-2","broker-3","broker-4","broker-5","broker-6","broker-7","broker-8","broker-9","broker-1"],["broker-2","broker-3","broker-4","broker-5","broker-6","broker-7","broker-8","broker-9","broker-1","broker-10"],["broker-3","broker-4","broker-5","broker-6","broker-7","broker-8","broker-9","broker-1","broker-10","broker-2"],["broker-4","broker-5","broker-6","broker-7","broker-8","broker-9","broker-1","broker-10","broker-2","broker-3"],["broker-5","broker-6","broker-7","broker-8","broker-9","broker-1","broker-10","broker-2","broker-3","broker-4"],["broker-6","broker-7","broker-8","broker-9","broker-1","broker-10","broker-2","broker-3","broker-4","broker-5"],["broker-7","broker-8","broker-9","broker-1","broker-10","broker-2","broker-3","broker-4","broker-5","broker-6"],["broker-8","broker-9","broker-1","broker-10","broker-2","broker-3","broker-4","broker-5","broker-6","broker-7"],["broker-9","broker-1","broker-10","broker-2","broker-3","broker-4","broker-5","broker-6","broker-7","broker-8"],["broker-1","broker-2","broker-3","broker-4","broker-5","broker-6","broker-7","broker-8","broker-9","broker-10"],["broker-10","broker-3","broker-4","broker-5","broker-6","broker-7","broker-8","broker-9","broker-1","broker-2"],["broker-2","broker-4","broker-5","broker-6","broker-7","broker-8","broker-9","broker-1","broker-10","broker-3"],["broker-3","broker-5","broker-6","broker-7","broker-8","broker-9","broker-1","broker-10","broker-2","broker-4"],["broker-4","broker-6","broker-7","broker-8","broker-9","broker-1","broker-10","broker-2","broker-3","broker-5"],["broker-5","broker-7","broker-8","broker-9","broker-1","broker-10","broker-2","broker-3","broker-4","broker-6"],["broker-6","broker-8","broker-9","broker-1","broker-10","broker-2","broker-3","broker-4","broker-5","broker-7"],["broker-7","broker-9","broker-1","broker-10","broker-2","broker-3","broker-4","broker-5","broker-6","broker-8"],["broker-8","broker-1","broker-10","broker-2","broker-3","broker-4","broker-5","broker-6","broker-7","broker-9"],["broker-9","broker-10","broker-2","broker-3","broker-4","broker-5","broker-6","broker-7","broker-8","broker-1"],["broker-1","broker-3","broker-4","broker-5","broker-6","broker-7","broker-8","broker-9","broker-10","broker-2"],["broker-10","broker-4","broker-5","broker-6","broker-7","broker-8","broker-9","broker-1","broker-2","broker-3"],["broker-2","broker-5","broker-6","broker-7","broker-8","broker-9","broker-1","broker-10","broker-3","broker-4"],["broker-3","broker-6","broker-7","broker-8","broker-9","broker-1","broker-10","broker-2","broker-4","broker-5"]]
+HASH a 1 0
+HASH a 2 0
+HASH a 3 2
+HASH a 4 2
+HASH a 6 2
+HASH a 8 6
+HASH a 12 2
+HASH a 24 14
+HASH b 1 0
+HASH b 2 0
+HASH b 3 0
+HASH b 4 0
+HASH b 6 0
+HASH b 8 4
+HASH b 12 0
+HASH b 24 12
+HASH k0 1 0
+HASH k0 2 0
+HASH k0 3 1
+HASH k0 4 0
+HASH k0 6 4
+HASH k0 8 0
+HASH k0 12 4
+HASH k0 24 16
+HASH k1 1 0
+HASH k1 2 0
+HASH k1 3 2
+HASH k1 4 0
+HASH k1 6 2
+HASH k1 8 0
+HASH k1 12 8
+HASH k1 24 8
+HASH zz 1 0
+HASH zz 2 0
+HASH zz 3 0
+HASH zz 4 2
+HASH zz 6 0
+HASH zz 8 2
+HASH zz 12 6
+HASH zz 24 18
+HASH orders 1 0
+HASH orders 2 1
+HASH orders 3 0
+HASH orders 4 3
+HASH orders 6 3
+HASH orders 8 7
+HASH orders 12 3
+HASH orders 24 15
+HASH aa9 1 0
+HASH aa9 2 0
+HASH aa9 3 2
+HASH aa9 4 0
+HASH aa9 6 2
+HASH aa9 8 4
+HASH aa9 12 8
+HASH aa9 24 20
+HASH x 1 0
+HASH x 2 0
+HASH x 3 1
+HASH x 4 2
+HASH x 6 4
+HASH x 8 2
+HASH x 12 10
+HASH x 24 10
+HASH 0 1 0
+HASH 0 2 0
+HASH 0 3 2
+HASH 0 4 2
+HASH 0 6 2
+HASH 0 8 2
+HASH 0 12 2
+HASH 0 24 2
+HASH q3v 1 0
+HASH q3v 2 0
+HASH q3v 3 0
+HASH q3v 4 0
+HASH q3v 6 0
+HASH q3v 8 0
+HASH q3v 12 0
+HASH q3v 24 0
+SIZE 10x1x1xpayments~6~3~1~d~~~~!audit~2~2~1~d~~~~ => 10x1x1xpayments~6~3~1~d~~~~!audit~2~2~1~d~~~~ :: {"brokersPerZone":[10],"partitions":1,"replicationFactor":1,"extraTopics":[{"name":"payments","partitions":6,"replicationFactor":3,"minInSyncReplicas":1,"cleanupPolicy":"delete"},{"name":"audit","partitions":2,"replicationFactor":2,"minInSyncReplicas":1,"cleanupPolicy":"delete"}]}
+SIZE 3x12x3 => 3x12x3 :: {"brokersPerZone":[3],"partitions":12,"replicationFactor":3}
+SIZE 10x1x1xa-b_c~3~2~1~d~~~~ => 10x1x1xa-b_c~3~2~1~d~~~~ :: {"brokersPerZone":[10],"partitions":1,"replicationFactor":1,"extraTopics":[{"name":"a-b_c","partitions":3,"replicationFactor":2,"minInSyncReplicas":1,"cleanupPolicy":"delete"}]}
+SIZE 4x1x1xt*-events~2~2~1~d~~~~ => 4x1x1xt*-events~2~2~1~d~~~~ :: {"brokersPerZone":[4],"partitions":1,"replicationFactor":1,"extraTopics":[{"name":"tx-events","partitions":2,"replicationFactor":2,"minInSyncReplicas":1,"cleanupPolicy":"delete"}]}
+SIZE 10x12x3xpayments~6~3~2~c~604800000~1073741824~~ => 10x12x3xpayments~6~3~2~c~604800000~1073741824~~ :: {"brokersPerZone":[10],"partitions":12,"replicationFactor":3,"extraTopics":[{"name":"payments","partitions":6,"replicationFactor":3,"minInSyncReplicas":2,"cleanupPolicy":"compact","retentionMs":604800000,"retentionBytes":1073741824}]}
+SIZE 6x4x3xaudit~3~2~1~cd~~~~ => 6x4x3xaudit~3~2~1~cd~~~~ :: {"brokersPerZone":[6],"partitions":4,"replicationFactor":3,"extraTopics":[{"name":"audit","partitions":3,"replicationFactor":2,"minInSyncReplicas":1,"cleanupPolicy":"compact,delete"}]}
+SIZE 3x1x1xmetrics~2~1~1~d~~500000~~ => 3x1x1xmetrics~2~1~1~d~~500000~~ :: {"brokersPerZone":[3],"partitions":1,"replicationFactor":1,"extraTopics":[{"name":"metrics","partitions":2,"replicationFactor":1,"minInSyncReplicas":1,"cleanupPolicy":"delete","retentionBytes":500000}]}
+SIZE 5x4x4xxxxxxxxxxx1~c~3600000~2000000~ => 5x4x4xxxxxxxxxxx1~c~3600000~2000000~ :: {"brokersPerZone":[5],"partitions":4,"replicationFactor":4,"primaryMinIsr":1,"primaryCleanup":"compact","primaryRetentionMs":3600000,"primaryRetentionBytes":2000000}
+SIZE 6x3x3xevents~2~2~1~d~~100~~xxxxxxxxxx~cd~~~ => 6x3x3xevents~2~2~1~d~~100~~xxxxxxxxxx~cd~~~ :: {"brokersPerZone":[6],"partitions":3,"replicationFactor":3,"primaryCleanup":"compact,delete","extraTopics":[{"name":"events","partitions":2,"replicationFactor":2,"minInSyncReplicas":1,"cleanupPolicy":"delete","retentionBytes":100}]}
+# The 5 SIZE lines below (KIP-1163 draft `diskless.enable`, v2.0+)
+# were generated 2026-09-23 by round-tripping hand-built
+# FreePlaySize objects - not hand-typed slugs - through the real
+# decodeFreePlaySize/encodeFreePlaySize in src/sim/freePlayTopologies.ts, via a
+# throwaway tsx script (not checked in) equivalent to:
+#   import { encodeFreePlaySize, decodeFreePlaySize } from '../src/sim/freePlayTopologies';
+#   function dump(type, size) {
+#     const raw = encodeFreePlaySize(size);
+#     const decoded = decodeFreePlaySize(type, raw);
+#     const reencoded = encodeFreePlaySize(decoded);
+#     console.log(`SIZE ${raw} => ${reencoded} :: ${JSON.stringify(decoded)}`);
+#   }
+#   dump('single-dc', { brokersPerZone: [10], partitions: 1, replicationFactor: 1,
+#     extraTopics: [{ name: 'wal', partitions: 4, replicationFactor: 3, minInSyncReplicas: 1, cleanupPolicy: 'delete', disklessEnable: true }] });
+#   // ...then a second extraTopics entry {name:'classic', ...} (no disklessEnable),
+#   // then primaryDiskless:true alone, then + disklessTiming:{commitIntervalMs:250,uploadMs:600},
+#   // then disklessTiming:{uploadMs:900} with no primaryDiskless (an extra topic
+#   // carries the diskless flag instead) - see mapping/size_test.go's matching
+#   // TestBuildSize cases for the exact FreePlaySize shape of each line, in order.
+# Run via `npx tsx <script>.ts` from the website repo root; delete the script
+# after copying its "SIZE ..." stdout lines here (it is not a permanent
+# generator - ts-fixtures.txt as a whole is a manual, point-in-time dump; see
+# the file header above).
+SIZE 10x1x1xwal~4~3~1~d~~~~~1 => 10x1x1xwal~4~3~1~d~~~~~1 :: {"brokersPerZone":[10],"partitions":1,"replicationFactor":1,"extraTopics":[{"name":"wal","partitions":4,"replicationFactor":3,"minInSyncReplicas":1,"cleanupPolicy":"delete","disklessEnable":true}]}
+SIZE 10x1x1xwal~4~3~1~d~~~~~1!classic~2~2~1~d~~~~ => 10x1x1xwal~4~3~1~d~~~~~1!classic~2~2~1~d~~~~ :: {"brokersPerZone":[10],"partitions":1,"replicationFactor":1,"extraTopics":[{"name":"wal","partitions":4,"replicationFactor":3,"minInSyncReplicas":1,"cleanupPolicy":"delete","disklessEnable":true},{"name":"classic","partitions":2,"replicationFactor":2,"minInSyncReplicas":1,"cleanupPolicy":"delete"}]}
+SIZE 5x4x3xxxxxxxxxxxxxxxxxxd => 5x4x3xxxxxxxxxxxxxxxxxxd :: {"brokersPerZone":[5],"partitions":4,"replicationFactor":3,"primaryDiskless":true}
+SIZE 5x4x3xxxxxxxxxxxxxxxxxxd250.600 => 5x4x3xxxxxxxxxxxxxxxxxxd250.600 :: {"brokersPerZone":[5],"partitions":4,"replicationFactor":3,"primaryDiskless":true,"disklessTiming":{"commitIntervalMs":250,"uploadMs":600}}
+SIZE 5x4x3xwal~4~3~1~d~~~~~1xxxxxxxxxxxxxxxxx.900 => 5x4x3xwal~4~3~1~d~~~~~1xxxxxxxxxxxxxxxxx.900 :: {"brokersPerZone":[5],"partitions":4,"replicationFactor":3,"extraTopics":[{"name":"wal","partitions":4,"replicationFactor":3,"minInSyncReplicas":1,"cleanupPolicy":"delete","disklessEnable":true}],"disklessTiming":{"uploadMs":900}}
+# 2026-09-24 (Task C): mcpserver/shape.go gained shape.disklessTiming, exposing
+# the SAME session-wide tail-index-17 timing that mapping/size.go's
+# disklessTail already encoded (via the new exported mapping.EncodeDisklessTail
+# helper both packages now call). No new SIZE lines were generated for it - the
+# two "primary diskless flag with timing" / "diskless timing only, upload side"
+# lines above already pin the exact slugs mcpserver/shape_test.go's new
+# TestShapeDocExamples cases assert, for the same broker/topic shapes. Task C
+# also looked at producer/consumer-group `client.rack` (KIP-1163 draft) parity
+# per task-B-report.md - neither mapping/size.go nor mcpserver/shape.go encode
+# producers or consumer groups at all (no size-slug tail index 1/2 codec exists
+# in this Go tool), so there was nothing to mirror it onto; see the "What is
+# NOT represented" note in docs/mapping.md.
+# 2026-09-24 (final-review fix): diskless-3az's preset topic (`clicks`) is
+# diskless on its own, with no caller topic ever setting disklessEnable -
+# clampDisklessFields' "kept only when some topic is diskless" check counts
+# templateTopics(type, ...), so disklessTiming alone is accepted for this
+# preset. Generated via clampFreePlaySize('diskless-3az', {brokersPerZone:[6],
+# partitions:3, replicationFactor:3, disklessTiming:{commitIntervalMs:500}})
+# then encodeFreePlaySize on the clamped result (script deleted after copying
+# its stdout line below).
+SIZE 6x3x3xxxxxxxxxxxxxxxxxx500. => 6x3x3xxxxxxxxxxxxxxxxxx500. :: {"brokersPerZone":[6],"partitions":3,"replicationFactor":3,"disklessTiming":{"commitIntervalMs":500}}
