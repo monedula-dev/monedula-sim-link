@@ -21,7 +21,7 @@ import (
 // declarative shape.
 type ClusterToURLInput struct {
 	Brokers     []string `json:"brokers" jsonschema:"Kafka bootstrap brokers as host:port; at least one, required. The connection is STRICTLY READ-ONLY (ApiVersions, Metadata, ListOffsets, ListGroups, DescribeGroups, OffsetFetch and DescribeConfigs requests only - no produce, no topic/config mutation, no consumer group joined)"`
-	Topics      []string `json:"topics,omitempty" jsonschema:"exact topic names to include. Fails if any is missing. Also the only way to include internal ('_'-prefixed) topics. Omit (with no topicsRegex) to include every non-internal topic"`
+	Topics      []string `json:"topics,omitempty" jsonschema:"exact topic names to include. Fails if any is missing. Also the only way to include internal topics (flagged internal by the broker, or with a leading '_'). Omit (with no topicsRegex) to include every non-internal topic"`
 	TopicsRegex string   `json:"topicsRegex,omitempty" jsonschema:"additionally include non-internal topics whose name matches this Go (RE2) regexp"`
 
 	TLS        bool   `json:"tls,omitempty" jsonschema:"connect over TLS (implied when any of caCert/clientCert/clientKey is set)"`

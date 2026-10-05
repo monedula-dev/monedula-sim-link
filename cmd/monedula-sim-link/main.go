@@ -54,7 +54,7 @@ type config struct {
 func registerConnectFlags(fs *flag.FlagSet) *config {
 	c := &config{}
 	fs.StringVar(&c.brokers, "brokers", "", "comma-separated Kafka bootstrap brokers (host:port); required")
-	fs.StringVar(&c.topics, "topics", "", "comma-separated exact topic names to include (also the only way to include internal '_'-prefixed topics)")
+	fs.StringVar(&c.topics, "topics", "", "comma-separated exact topic names to include (also the only way to include internal topics: flagged internal by the broker, or with a leading '_')")
 	fs.StringVar(&c.topicsRegex, "topics-regex", "", "additionally include non-internal topics matching this Go regexp")
 	fs.BoolVar(&c.tlsEnable, "tls", false, "connect over TLS")
 	fs.StringVar(&c.caCert, "ca-cert", "", "PEM CA certificate file to trust (implies --tls)")

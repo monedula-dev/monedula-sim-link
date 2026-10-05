@@ -48,7 +48,8 @@ in `snapshot/kafka_test.go`).
 monedula-sim-link connect --brokers localhost:9092
 
 # Pick topics: exact names, a regex, or both. Exact names are also the only
-# way to include internal (underscore-prefixed) topics:
+# way to include internal topics (flagged internal by the broker, or with a
+# leading `_`):
 monedula-sim-link connect --brokers localhost:9092 --topics orders,payments
 monedula-sim-link connect --brokers localhost:9092 --topics-regex '^prod-'
 monedula-sim-link connect --brokers localhost:9092 --topics __consumer_offsets
@@ -90,7 +91,7 @@ monedula-sim-link connect --brokers localhost:9092 \
 | Flag | Meaning |
 |------|---------|
 | `--brokers` | Comma-separated bootstrap brokers (`host:port`). Required. |
-| `--topics` | Comma-separated exact topic names. Fails if any is missing. Only way to include internal `_`-topics. |
+| `--topics` | Comma-separated exact topic names. Fails if any is missing. Only way to include internal topics (flagged internal by the broker, or with a leading `_`). |
 | `--topics-regex` | Additionally include non-internal topics matching this Go regexp. |
 | `--tls` | Connect over TLS (implied by the cert flags). |
 | `--ca-cert` | PEM CA file appended to the system trust pool. |
