@@ -80,12 +80,20 @@ documented in playground-url-api.md §13):
 | Brokers (single-DC) | 10 |
 | Partitions per topic | 24 |
 | Extra topics besides `orders` | 6 |
+| Consumer groups | 4 |
 
-A selection over any cap **fails with a message listing every violation** by
-default. With `--clamp` it is trimmed **deterministically** instead, with a
-warning: brokers keep the N lowest ids, topics keep the alphabetically first 6
-extras, partitions keep ids `0..23`. Replicas pointing at clamped-away brokers
-are dropped from reassignments (warned per partition).
+A selection over any cap **fails** by default. Without `--clamp` the broker,
+extra-topic and partition caps are checked together and the failure lists every
+one of those violations at once; the consumer-group cap is checked once those
+pass, so it can fail on its own. With `--clamp` the selection is trimmed
+**deterministically** instead, with a warning: brokers keep the N lowest ids,
+topics keep the alphabetically first 6 extras, partitions keep ids `0..23`,
+consumer groups keep the alphabetically first 4. The group cap counts every
+consumer group the snapshot read, before groups with no committed offsets on a
+rendered topic are skipped. Replicas pointing at clamped-away brokers are
+dropped from reassignments (warned per partition). Members per group (4) are
+not a failing cap: the first 4 are always kept, with a warning, with or
+without `--clamp`.
 
 ## Topic and broker naming
 
@@ -135,9 +143,10 @@ not necessarily the real leader.
 
 ## Data volume: `P` produce bursts
 
-Real record *contents* are never read (the tool speaks only Metadata and
-ListOffsets), so data volume is shown with **synthetic trailing records**: per
-partition, `min(latest - earliest, --max-records-per-partition)` records
+Real record *contents* are never read (the tool never issues a Fetch; offset
+ranges come from ListOffsets), so data volume is shown with **synthetic
+trailing records**: per partition,
+`min(latest - earliest, --max-records-per-partition)` records
 (default 8) — relative fill, not absolute offsets.
 
 To land each record on its intended partition, the mapping ports the
@@ -164,7 +173,7 @@ could never acknowledge); a warning explains the skip.
 to `ProtocolType == "consumer"` — Kafka Connect workers and KIP-932 share
 groups are skipped), describes up to `MaxGroupsFetched` of them alphabetically
 (`DescribeGroups`, for state and members) and fetches their committed offsets
-restricted to the selected topics (`OffsetFetch`). All four requests are
+restricted to the selected topics (`OffsetFetch`). All three requests are
 read-only; none joins a group or commits an offset.
 
 The mapping then, per real group (alphabetically first `MaxGroups` = 4 kept,
@@ -183,7 +192,8 @@ an engine limit):
    watermark), so this is the one lever the action-log grammar has to make a
    group visibly behind instead of caught up.
 4. Joins up to `MaxGroupMembers` (= 4, mirroring `MAX_FREE_PLAY_GROUP_MEMBERS`)
-   real members via `AC:<simGroup>:<simMember>` (`add_consumer`), named from
+   real members (the first 4 in the order `DescribeGroups` returned them, not
+   sorted) via `AC:<simGroup>:<simMember>` (`add_consumer`), named from
    each member's `ClientID` (falling back to its member id, then a positional
    `mN`) and deduped **by position**, not by name — two real members sharing
    one `ClientID` still get two distinct, non-colliding `add_consumer` entries.
@@ -200,10 +210,11 @@ count.
 ## Self-validation
 
 `Map` verifies its own output round-trips the codec
-(`encode → decode → encode`), and the CLI re-decodes the final URL value,
-refuses the deflate-compressed `~1` form (today's playground decodes lz-string;
-see the README compatibility note) and refuses URLs over 2048 chars — `--force`
-downgrades the last two to warnings. Losslessness is never overridable.
+(`encode → decode → encode`), and the CLI re-decodes the final URL value and
+refuses URLs over 2048 chars - `--force` downgrades that to a warning. The
+compressed `~1` form is accepted, not refused: the playground decodes both the
+raw-DEFLATE layout this tool emits and its own lz-string layout (see the README
+compatibility note). Losslessness is never overridable.
 
 ## What is NOT represented
 
@@ -216,9 +227,10 @@ downgrades the last two to warnings. Losslessness is never overridable.
   — a group is shown as caught up or behind, not at its precise real offset.
 - **Kafka Connect worker groups and KIP-932 share groups.** `fetchGroups` only
   reads `ProtocolType == "consumer"` groups.
-- **Groups/members beyond the caps.** At most `MaxGroups` (4) real groups and
-  `MaxGroupMembers` (4) real members per group are rendered, alphabetically
-  first — the same canvas-legibility caps the free-play UI itself uses.
+- **Groups/members beyond the caps.** At most `MaxGroups` (4) real groups
+  (alphabetically first) and `MaxGroupMembers` (4) real members per group
+  (the first 4 in `DescribeGroups` order, not sorted) are rendered - the same
+  canvas-legibility caps the free-play UI itself uses.
 - **Controller / KRaft state.** The simulator boots its own 3-voter quorum;
   the real controller id and quorum layout are ignored.
 - **Rack topology.** The single-DC free-play shape has no rack axis; real
