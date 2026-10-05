@@ -38,6 +38,7 @@ func TestConfigWhitelistFullSection6(t *testing.T) {
 		"localRetentionMs":    {Path: "topics.orders.localRetentionMs", Value: "700"},
 		"unclean election":    {Path: "topic.orders.unclean.leader.election.enable", Value: "false"},
 		"pollMs":              {Path: "consumer.pollMs", Value: "800"},
+		"group pollMs":        {Path: "group.g2.consumer.pollMs", Value: "800"},
 		"autoOffsetReset":     {Path: "consumer.autoOffsetReset", Value: "latest"},
 		"group offset reset":  {Path: "group.g2.consumer.autoOffsetReset", Value: "none"},
 		"isolationLevel":      {Path: "consumer.isolationLevel", Value: "read_committed"},
@@ -124,6 +125,49 @@ func TestConfigPartitionsResize(t *testing.T) {
 		if _, err := Decode(raw); err == nil {
 			t.Errorf("Decode(%q): expected error, got nil", raw)
 		}
+	}
+}
+
+// TestConfigGroupPollMs covers the per-group consumer poll interval path
+// group.<id>.consumer.pollMs, which the §6 table lists alongside the global
+// consumer.pollMs (same shape as the autoOffsetReset / isolationLevel rows):
+// it takes the same integer rule as the global path, round-trips through
+// encode/decode, and drops a non-integer on both the encode and decode side.
+func TestConfigGroupPollMs(t *testing.T) {
+	const wire = "C:group.g2.consumer.pollMs:800@3000"
+	entry := Entry{At: 3000, Action: ConfigChange{Path: "group.g2.consumer.pollMs", Value: "800"}}
+
+	enc, err := EncodeEntry(entry)
+	if err != nil {
+		t.Fatalf("EncodeEntry(group pollMs): %v", err)
+	}
+	if enc != wire {
+		t.Fatalf("group pollMs encode: got %q want %q", enc, wire)
+	}
+	dec, err := Decode(wire)
+	if err != nil {
+		t.Fatalf("Decode(%q): %v", wire, err)
+	}
+	if !reflect.DeepEqual(dec, []Entry{entry}) {
+		t.Fatalf("group pollMs decode: got %#v want %#v", dec, []Entry{entry})
+	}
+	roundTrip(t, []Entry{entry})
+
+	// The per-group path rejects exactly what the global path rejects.
+	for _, bad := range []string{"fast", "1.5", "08", ""} {
+		for _, path := range []string{"consumer.pollMs", "group.g2.consumer.pollMs"} {
+			if _, err := EncodeEntry(Entry{At: 3000, Action: ConfigChange{Path: path, Value: bad}}); err == nil {
+				t.Errorf("EncodeEntry(%s=%q): expected error, got nil", path, bad)
+			}
+			if _, err := Decode("C:" + path + ":" + bad + "@3000"); err == nil {
+				t.Errorf("Decode(%s=%q): expected error, got nil", path, bad)
+			}
+		}
+	}
+
+	// pollMs is not a clearable knob on either path.
+	if _, err := EncodeEntry(Entry{At: 3000, Action: ConfigChange{Path: "group.g2.consumer.pollMs", Clear: true}}); err == nil {
+		t.Error("cleared group pollMs: expected error, got nil")
 	}
 }
 

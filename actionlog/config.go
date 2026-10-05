@@ -125,7 +125,7 @@ var configRules = []configRule{
 	{re: regexp.MustCompile(`^topics\..+\.retentionBytes$`), clearable: true, expect: "an integer ≥ 1, or cleared", accept: acceptIntMin(1)},
 	{re: regexp.MustCompile(`^topics\..+\.localRetentionMs$`), clearable: true, expect: "an integer ≥ 1, or cleared", accept: acceptIntMin(1)},
 	{re: regexp.MustCompile(`^topic\..+\.unclean\.leader\.election\.enable$`), expect: expectBool, accept: acceptBool},
-	{re: regexp.MustCompile(`^consumer\.pollMs$`), expect: "an integer", accept: acceptAnyInt},
+	{re: regexp.MustCompile(`^(consumer\.pollMs|group\..+\.consumer\.pollMs)$`), expect: "an integer", accept: acceptAnyInt},
 	{re: regexp.MustCompile(`^(consumer\.autoOffsetReset|group\..+\.consumer\.autoOffsetReset)$`), expect: `"earliest", "latest" or "none"`, accept: acceptEnum("earliest", "latest", "none")},
 	{re: regexp.MustCompile(`^(consumer\.isolationLevel|group\..+\.consumer\.isolationLevel)$`), expect: `"read_committed" or "read_uncommitted"`, accept: acceptEnum("read_committed", "read_uncommitted")},
 	{re: regexp.MustCompile(`^group\..+\.partition\.assignment\.strategy$`), expect: `"range", "roundrobin", "sticky" or "cooperative-sticky"`, accept: acceptEnum("range", "roundrobin", "sticky", "cooperative-sticky")},

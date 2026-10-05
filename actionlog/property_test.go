@@ -150,6 +150,9 @@ func (m *mulberry32) genConfig() ConfigChange {
 		},
 		func() ConfigChange { return ConfigChange{Path: "consumer.pollMs", Value: itoa(m.intn(0, 5000))} },
 		func() ConfigChange {
+			return ConfigChange{Path: "group." + m.safeID() + ".consumer.pollMs", Value: itoa(m.intn(0, 5000))}
+		},
+		func() ConfigChange {
 			return ConfigChange{Path: "group." + m.safeID() + ".consumer.autoOffsetReset", Value: m.choice("earliest", "latest", "none")}
 		},
 		func() ConfigChange {
