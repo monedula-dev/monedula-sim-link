@@ -73,7 +73,7 @@ Defaults when omitted: single-dc topology, 3 brokers (broker-1..broker-3), topic
 		Name: "cluster_to_url",
 		Description: `Connect READ-ONLY to a real Kafka cluster and build the playground URL that visualizes it — brokers, topics, partition placement, offline brokers, ISR gaps and a sample of data volume. The live-cluster counterpart to build_playground_url's declarative shape; it mirrors the "monedula-sim-link connect" CLI.
 
-The connection is strictly read-only by construction: the ONLY Kafka requests issued are ApiVersions (the client handshake), Metadata (sent with AllowAutoTopicCreation=false, so a topic lookup can never create it) and ListOffsets. No records are produced, no topic or config is created or altered, no consumer group is joined, no offset is committed.
+The connection is strictly read-only by construction: the ONLY Kafka requests issued are ApiVersions (the client handshake), Metadata (sent with AllowAutoTopicCreation=false, so a topic lookup can never create it), ListOffsets, ListGroups, DescribeGroups, OffsetFetch and DescribeConfigs - all read requests. No records are produced, no topic or config is created or altered, no consumer group is joined, no offset is committed.
 
 Inputs mirror the CLI: bootstrap brokers (required), an exact topic list and/or a regex, TLS (caCert/clientCert/clientKey are FILE PATHS resolved on the MCP SERVER's host), SASL (prefer the MONEDULA_SIM_LINK_PASSWORD env var over passing the password), a timeout, and the record-volume cap. If the selection exceeds the simulator's caps the call fails with the violations listed unless clamp is set; a selection matching nothing is an actionable error, never a silent empty link.
 

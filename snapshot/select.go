@@ -66,7 +66,7 @@ func (s Selection) Apply(topics []TopicInfo) ([]string, error) {
 		if s.IsEmpty() {
 			return nil, fmt.Errorf("the cluster has no non-internal topics to visualize")
 		}
-		return nil, fmt.Errorf("topic selection matched nothing (internal topics — leading underscore — are excluded unless listed exactly via --topics)")
+		return nil, fmt.Errorf("topic selection matched nothing (internal topics, meaning topics the broker flags as internal or whose name starts with an underscore, are excluded unless listed exactly via --topics)")
 	}
 	out := make([]string, 0, len(picked))
 	for name := range picked {
