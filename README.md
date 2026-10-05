@@ -13,7 +13,7 @@ https://monedula.dev/kafka-simulator/playground?scenario=free&actions=…&size=3
 
 It also ships an [MCP server](#mcp-server), so an AI agent can build the same
 links, and it is a reference generator for the
-[playground URL format](https://monedula.dev/kafka-simulator/url-api/).
+[playground URL format](https://monedula.dev/flock/docs/kafka-simulator/reference/url-format/).
 
 ## Install
 
@@ -48,7 +48,8 @@ in `snapshot/kafka_test.go`).
 monedula-sim-link connect --brokers localhost:9092
 
 # Pick topics: exact names, a regex, or both. Exact names are also the only
-# way to include internal (underscore-prefixed) topics:
+# way to include internal topics (flagged internal by the broker, or with a
+# leading `_`):
 monedula-sim-link connect --brokers localhost:9092 --topics orders,payments
 monedula-sim-link connect --brokers localhost:9092 --topics-regex '^prod-'
 monedula-sim-link connect --brokers localhost:9092 --topics __consumer_offsets
@@ -70,9 +71,10 @@ monedula-sim-link connect --brokers broker:9093 \
 monedula-sim-link connect --brokers localhost:9092 --dry-run
 
 # Selection larger than the simulator renders (10 brokers / 6 extra topics /
-# 24 partitions per topic)? The default is a hard failure listing the
-# violations; --clamp trims deterministically (lowest ids / alphabetical)
-# with warnings instead:
+# 24 partitions per topic / 4 consumer groups)? The default is a hard failure
+# listing every broker, topic and partition violation at once (the
+# consumer-group cap is checked once those pass); --clamp trims
+# deterministically (lowest ids / alphabetical) with warnings instead:
 monedula-sim-link connect --brokers localhost:9092 --clamp
 
 # No cluster handy: feed a built-in fixture (offline broker, custom placement,
@@ -89,7 +91,7 @@ monedula-sim-link connect --brokers localhost:9092 \
 | Flag | Meaning |
 |------|---------|
 | `--brokers` | Comma-separated bootstrap brokers (`host:port`). Required. |
-| `--topics` | Comma-separated exact topic names. Fails if any is missing. Only way to include internal `_`-topics. |
+| `--topics` | Comma-separated exact topic names. Fails if any is missing. Only way to include internal topics (flagged internal by the broker, or with a leading `_`). |
 | `--topics-regex` | Additionally include non-internal topics matching this Go regexp. |
 | `--tls` | Connect over TLS (implied by the cert flags). |
 | `--ca-cert` | PEM CA file appended to the system trust pool. |
@@ -209,12 +211,12 @@ local dev server.
 ### Tools
 
 **`build_playground_url`** - a free-play session from a declarative
-description: optional topology (`single-dc`, `active-passive`,
-`active-active`, `stretched-2-5`, `stretched-3`, `diskless-3az`), optional cluster shape
+description: optional `cluster` topology (`single-dc`, `active-passive`,
+`active-active`, `stretched-2-5`, `stretched-3`, `diskless-3az`), optional `shape`
 (brokers, topics with partitions / RF / min.ISR / cleanup policy, rack-aware
 flag, and - KIP-1163 draft, v2.0+ - a per-topic `disklessEnable`
 flag plus a session-wide `disklessTiming` override) mapped onto the `cluster` +
-`size` params (§9–§14), and an ordered list of timed actions. Returns the URL
+`size` params (§9–§14), and an ordered list of timed `actions`. Returns the URL
 plus an echo of the actions **decoded back out of it**, so the caller can
 confirm losslessness.
 
@@ -250,7 +252,7 @@ shape does not model initial producers or consumer groups at all.
 plus `decodedActions` echoing the five actions.
 
 Action kinds: `produce` (key / value / tombstone), `kill_broker` (hard /
-graceful), `restart_broker`, `add_broker`, `remove_broker`, `add_producer`,
+graceful), `restart_broker`, `add_broker`, `remove_broker`, `add_producer`, `remove_producer`,
 `add_group` (optional `autoOffsetReset`), `add_consumer`, `add_share_group`, `config_change` (§6 whitelist,
 incl. `clear` for the clearable knobs), `reassign_partition`,
 `change_replication_factor`, `set_replica_speed`, `tier_offload`.
@@ -301,8 +303,9 @@ approximations, clamps), and the actions **decoded back out of the URL** -
 including `add_group` / `add_consumer` for every mapped consumer group and its
 (capped) real members - so the caller can confirm the snapshot mapping is
 lossless. A selection matching nothing is an actionable error; a selection
-over the free-play caps fails with the violations unless `clamp` is set (both
-never emit a silent or wrong link).
+over the free-play caps fails unless `clamp` is set, listing every broker,
+topic and partition violation at once (the 4-group cap is checked once those
+pass); neither case emits a silent or wrong link.
 
 ## Architecture
 
@@ -402,7 +405,7 @@ remain standard-library only.
 
 ## Spec reference
 
-The grammar is defined by the public **[playground URL format](https://monedula.dev/kafka-simulator/url-api/)** specification
+The grammar is defined by the public **[playground URL format](https://monedula.dev/flock/docs/kafka-simulator/reference/url-format/)** specification
 (the free-play `size` param is specified in its §9–§14). This module implements it
 directly:
 

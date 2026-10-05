@@ -20,8 +20,8 @@ import (
 // mapping caps. It is the live-cluster counterpart to build_playground_url's
 // declarative shape.
 type ClusterToURLInput struct {
-	Brokers     []string `json:"brokers" jsonschema:"Kafka bootstrap brokers as host:port; at least one, required. The connection is STRICTLY READ-ONLY (ApiVersions, Metadata and ListOffsets requests only — no produce, no topic/config mutation, no consumer group joined)"`
-	Topics      []string `json:"topics,omitempty" jsonschema:"exact topic names to include. Fails if any is missing. Also the only way to include internal ('_'-prefixed) topics. Omit (with no topicsRegex) to include every non-internal topic"`
+	Brokers     []string `json:"brokers" jsonschema:"Kafka bootstrap brokers as host:port; at least one, required. The connection is STRICTLY READ-ONLY (ApiVersions, Metadata, ListOffsets, ListGroups, DescribeGroups, OffsetFetch and DescribeConfigs requests only - no produce, no topic/config mutation, no consumer group joined)"`
+	Topics      []string `json:"topics,omitempty" jsonschema:"exact topic names to include. Fails if any is missing. Also the only way to include internal topics (flagged internal by the broker, or with a leading '_'). Omit (with no topicsRegex) to include every non-internal topic"`
 	TopicsRegex string   `json:"topicsRegex,omitempty" jsonschema:"additionally include non-internal topics whose name matches this Go (RE2) regexp"`
 
 	TLS        bool   `json:"tls,omitempty" jsonschema:"connect over TLS (implied when any of caCert/clientCert/clientKey is set)"`
@@ -35,7 +35,7 @@ type ClusterToURLInput struct {
 
 	TimeoutSeconds         int  `json:"timeoutSeconds,omitempty" jsonschema:"overall snapshot timeout in seconds (default 15)"`
 	MaxRecordsPerPartition int  `json:"maxRecordsPerPartition,omitempty" jsonschema:"cap on synthetic trailing records produced per partition to represent data volume (default 8)"`
-	Clamp                  bool `json:"clamp,omitempty" jsonschema:"when the selection exceeds the simulator's free-play caps (10 brokers / 6 extra topics / 24 partitions per topic), clamp deterministically (lowest ids / alphabetical) with warnings instead of failing"`
+	Clamp                  bool `json:"clamp,omitempty" jsonschema:"when the selection exceeds the simulator's free-play caps (10 brokers / 6 extra topics / 24 partitions per topic / 4 consumer groups), clamp deterministically (lowest ids / alphabetical) with warnings instead of failing"`
 }
 
 // NameMapping is one real-name → simulator-name entry in the echo tables.

@@ -65,6 +65,13 @@ func TestSelectionNoMatchFails(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "matched nothing") {
 		t.Fatalf("want no-match error, got %v", err)
 	}
+	// The message must describe the whole internal-topic rule (broker-flagged
+	// or leading underscore), not just the underscore convention.
+	for _, want := range []string{"flags as internal", "starts with an underscore"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("no-match error should mention %q, got %v", want, err)
+		}
+	}
 	_, err = Selection{}.Apply([]TopicInfo{{Name: "_only", Internal: true}})
 	if err == nil {
 		t.Fatal("want error when only internal topics exist")

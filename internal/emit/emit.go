@@ -4,7 +4,7 @@
 // duplicating the connect, mapping and validation logic.
 //
 // The pipeline is strictly READ-ONLY on the cluster side: Snapshot builds the
-// snapshot.Client (ApiVersions + Metadata + ListOffsets only) and never writes.
+// snapshot.Client (read requests only, listed in snapshot/kafka.go) and never writes.
 // Build then performs the pre-print self-validation the playground cannot do
 // (it silently drops malformed entries), so a link is never returned unless its
 // actions value self-decodes back to the identical log.
