@@ -1,0 +1,3 @@
+# Built binaries from `go build ./cmd/...`
+/monedula-sim-link
+/cmd/monedula-sim-link/monedula-sim-link
