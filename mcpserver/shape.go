@@ -118,9 +118,37 @@ func rfMax(t topology, brokers []int) int {
 	}
 }
 
-// maxPartitions is §12's partition clamp. For stretched-3 the doc bounds the
-// busiest broker to 3 partition strips at the chosen RF; the conservative
-// closed form is floor(3*brokers/rf).
+// The stretched-3 partition rule, ported from the simulator's
+// maxFreePlayPartitions (src/sim/freePlayTopologies.ts). Its DC bands do not
+// grow, so the count is bounded by how many partition strips the busiest
+// broker holds under the engine's contiguous round-robin placement, not by a
+// closed form.
+const (
+	// maxBandPartitions is MAX_FREE_PLAY_PARTITIONS: the absolute partition cap
+	// of every multi-DC topology, and the upper end of the stretched-3 search.
+	maxBandPartitions = 6
+	// partitionStripsPerBroker is PARTITION_STRIPS_PER_BROKER: the strips a
+	// non-growing band broker can show without clipping.
+	partitionStripsPerBroker = 3
+)
+
+// busiestBrokerLoad mirrors busiestBrokerLoad in freePlayTopologies.ts: partition
+// i's replicas are brokers i..i+rf-1 (mod brokers), so each broker sits in rf of
+// every `brokers` consecutive partitions.
+func busiestBrokerLoad(partitions, rf, brokers int) int {
+	if brokers <= 0 {
+		return partitions
+	}
+	return rf*(partitions/brokers) + min(rf, partitions%brokers)
+}
+
+// maxPartitions is §12's partition clamp. For stretched-3 it mirrors the
+// simulator's maxFreePlayPartitions exactly: the largest count in 1..6 that
+// keeps the busiest broker within 3 partition strips at the chosen RF
+// (busiestBrokerLoad is monotonic in the count, so the first count that
+// overflows ends the search). The result never exceeds 6; the closed form
+// 3*brokers/rf this replaced allowed up to 9 on 9 brokers at RF 3, a count the
+// simulator clamps back to 6.
 func maxPartitions(t topology, brokers []int, rf int) int {
 	if t.partitionCap > 0 {
 		return t.partitionCap
@@ -129,7 +157,15 @@ func maxPartitions(t topology, brokers []int, rf int) int {
 	for _, b := range brokers {
 		total += b
 	}
-	return 3 * total / rf
+	rf = max(1, rf)
+	best := 1
+	for p := 1; p <= maxBandPartitions; p++ {
+		if busiestBrokerLoad(p, rf, total) > partitionStripsPerBroker {
+			break
+		}
+		best = p
+	}
+	return best
 }
 
 var topicNameRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,40}$`)

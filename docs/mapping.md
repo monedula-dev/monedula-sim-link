@@ -109,6 +109,17 @@ dropped (`mapping/rank.go`):
 Members per group (4) are not a failing cap: the first 4 are always kept, with
 a warning, with or without `--clamp`.
 
+The caps above are the single-DC ones this mapping targets. The MCP
+`build_playground_url` shape tool also validates the multi-DC topologies, and
+`stretched-3` has no constant partition cap: it follows the simulator's
+`maxFreePlayPartitions`, the largest count from 1 to 6 that keeps the busiest
+broker within 3 partition strips at the chosen RF (partition `i` sits on brokers
+`i..i+rf-1` modulo the broker count, so after `p` partitions a broker holds at
+most `rf*floor(p/brokers) + min(rf, p mod brokers)` of them). It never exceeds 6:
+9 brokers at RF 3 allow 6 partitions and reject 7, 9 brokers at RF 4 allow 3.
+`mcpserver/shape.go` ports the loop and `mcpserver/shape_test.go` pins its
+answers to the simulator's own function.
+
 ## Topic and broker naming
 
 Simulator broker ids are positional (`broker-1..broker-N` over the

@@ -1,6 +1,8 @@
 package mcpserver
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -261,6 +263,58 @@ func TestShapeValidationErrors(t *testing.T) {
 				if !strings.Contains(err.Error(), n) {
 					t.Errorf("error %q does not mention %q", err, n)
 				}
+			}
+		})
+	}
+}
+
+// TestStretched3PartitionCap pins the stretched-3 partition clamp to the
+// simulator's maxFreePlayPartitions (src/sim/freePlayTopologies.ts). The wanted
+// caps were produced by calling the real TypeScript function, not derived from a
+// formula: the cap is the largest count in 1..6 that keeps the busiest broker at
+// or under 3 partition strips, so it never exceeds 6. The closed form
+// 3*brokers/rf this replaced allowed 9 partitions on 9 brokers at RF 3, and 6 on
+// 9 brokers at RF 4, where the simulator clamps to 6 and 3.
+func TestStretched3PartitionCap(t *testing.T) {
+	cases := []struct {
+		zones []int
+		rf    int
+		max   int
+	}{
+		{[]int{3, 3, 3}, 1, 6},
+		{[]int{3, 3, 3}, 2, 6},
+		{[]int{3, 3, 3}, 3, 6}, // 9 brokers, RF 3: 6 allowed, 7 rejected
+		{[]int{3, 3, 3}, 4, 3},
+		{[]int{3, 3, 3}, 9, 3},
+		{[]int{1, 1, 1}, 1, 6},
+		{[]int{1, 1, 1}, 2, 4},
+		{[]int{1, 1, 1}, 3, 3}, // the template default
+		{[]int{2, 2, 2}, 3, 6},
+		{[]int{2, 2, 2}, 4, 3},
+		{[]int{1, 2, 3}, 3, 6},
+		{[]int{4, 3, 2}, 5, 3},
+		{[]int{1, 1, 2}, 2, 5},
+		{[]int{3, 3, 2}, 8, 3},
+	}
+	for _, tc := range cases {
+		name := strings.Trim(strings.Join(strings.Fields(fmt.Sprint(tc.zones)), "-"), "[]") + " rf " + strconv.Itoa(tc.rf)
+		t.Run(name, func(t *testing.T) {
+			topo := topologies["stretched-3"]
+			if got := maxPartitions(topo, tc.zones, tc.rf); got != tc.max {
+				t.Fatalf("maxPartitions = %d, want %d", got, tc.max)
+			}
+			shape := func(partitions int) *ClusterShape {
+				return &ClusterShape{BrokersPerZone: tc.zones, Topics: []TopicShape{{Name: "orders", Partitions: partitions, ReplicationFactor: tc.rf}}}
+			}
+			if _, _, _, err := shapeToParams("stretched-3", shape(tc.max)); err != nil {
+				t.Errorf("%d partitions must be accepted: %v", tc.max, err)
+			}
+			_, _, _, err := shapeToParams("stretched-3", shape(tc.max+1))
+			if err == nil {
+				t.Fatalf("%d partitions must be rejected (cap %d)", tc.max+1, tc.max)
+			}
+			if !strings.Contains(err.Error(), strconv.Itoa(tc.max+1)) || !strings.Contains(err.Error(), "cap of "+strconv.Itoa(tc.max)) {
+				t.Errorf("error %q should name the count and the cap", err)
 			}
 		})
 	}
