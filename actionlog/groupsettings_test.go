@@ -111,15 +111,24 @@ func TestGroupSettingsWebsiteFixtures(t *testing.T) {
 
 // TestGroupSettingsResetLog decodes the whole actions value PlaygroundStore
 // wrote for the free-play active-active reset (see the fixtures above). This
-// codec does not model kill_consumer (KC) or remove_group (RG), so those two
-// fail; everything else, the configured add_group included, survives.
+// codec does not model kill_consumer (KC), so that entry fails; everything
+// else survives, the configured add_group and the remove_group (RG) included.
 func TestGroupSettingsResetLog(t *testing.T) {
 	const log = "C:group.g1.consumer.pollMs:500@0,P:pw:west.orders:w-1@0,P:pe:east.orders:e-1@0,KC:w1@6000,RG:g1@6000," +
 		"AG:g1:west.orders~east.orders:e:region=west~assignor=range~isolationLevel=read_committed~autoCommit=true~pollMs=500~maxPollRecords=3~maxPollIntervalMs=60000~rack=west-1a~principal=User:CN=west~_OU=apps@6000," +
 		"AC:g1:w1@6000"
 	kept, dropped := DecodeTolerant(log)
-	if len(dropped) != 2 || !strings.HasPrefix(dropped[0].Raw, "KC:") || !strings.HasPrefix(dropped[1].Raw, "RG:") {
-		t.Fatalf("dropped = %+v, want only the KC and RG entries", dropped)
+	if len(dropped) != 1 || !strings.HasPrefix(dropped[0].Raw, "KC:") {
+		t.Fatalf("dropped = %+v, want only the KC entry", dropped)
+	}
+	var removed []string
+	for _, e := range kept {
+		if a, ok := e.Action.(RemoveGroup); ok {
+			removed = append(removed, a.GroupID)
+		}
+	}
+	if !reflect.DeepEqual(removed, []string{"g1"}) {
+		t.Fatalf("remove_group entries = %v, want [g1]", removed)
 	}
 	var ag *AddGroup
 	for _, e := range kept {

@@ -23,10 +23,10 @@ omitted). Spec references: `docs/playground-url-api.md` in the website repo
    cap, the most eventful are kept (see *Caps* below). Each topic's
    `DescribeConfigs` result (cleanup policy, min.ISR, retention) travels with it.
 3. **Size param** — brokers/partitions/RF/config per the shape rules below.
-4. **Action log** — in fixed order: remove the free-play template producer →
-   reassignments → kills → replica slowdowns → per-topic produce bursts →
-   consumer groups. Actions are spaced 250 ms apart on the simulation timeline
-   starting at t=500 ms.
+4. **Action log** - in fixed order: remove the free-play template producer and
+   template consumer group → reassignments → kills → replica slowdowns →
+   per-topic produce bursts → consumer groups. Actions are spaced 250 ms apart
+   on the simulation timeline starting at t=500 ms.
 
 ## Cluster shape: the `size` param
 
@@ -205,6 +205,23 @@ A partition whose rendered replicas are all dead gets **no** produces (they
 could never acknowledge); a warning explains the skip.
 
 ## Consumer groups: `AG`/`AC` + the lag approximation
+
+**The template group goes first.** The single-DC free-play template starts with
+a default consumer group `c1` (one member, also `c1`, reading the primary topic)
+as well as a producer `p1`. The mapping removes the producer with `RP:p1@500` and
+the group with `RG:c1@750` before anything else, so a fake consumer does not sit
+beside the real groups, and it does so even when the cluster has no consumer
+group at all.
+
+*A real group called `c1`.* When a group the mapping adds gets the simulator id
+`c1`, the template group is **kept**: the log never removes a group it is about to
+add, so there is no `RG:c1`. The `add_group` that follows is a no-op, because the
+simulator never replaces an existing group, so the playground shows that group as
+the template one: subscribed to the primary topic only (not to the real group's
+topics) and with the default member `c1` beside the real members. A warning says
+so. Only a group that is actually added counts: a real `c1` that is skipped (no
+committed offsets on a rendered topic) or dropped by the group cap leaves the
+template group removed as usual.
 
 `fetchGroups` (`snapshot/kafka.go`) lists every group (`ListGroups`, filtered
 to `ProtocolType == "consumer"` — Kafka Connect workers and KIP-932 share

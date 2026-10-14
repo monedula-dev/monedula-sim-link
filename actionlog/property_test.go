@@ -207,6 +207,7 @@ func (m *mulberry32) genAction() Action {
 		func() Action { return RemoveProducer{ProducerID: m.safeID()} },
 		func() Action { return m.genProduce() },
 		func() Action { return AddConsumer{GroupID: m.safeID(), MemberID: m.safeID()} },
+		func() Action { return RemoveGroup{GroupID: m.safeID()} },
 		func() Action {
 			n := m.intn(1, 3)
 			topics := make([]string, n)

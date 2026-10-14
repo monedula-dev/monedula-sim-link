@@ -231,9 +231,11 @@ func TestURLMapsTheCluster(t *testing.T) {
 	produces := map[string]int{}
 	groups := map[string]bool{}
 	consumers := map[string]int{}
-	var resets, kills, slowdowns []string
+	var resets, kills, slowdowns, removedGroups []string
 	for _, e := range res.DecodedActions {
 		switch a := e.Action.(type) {
+		case actionlog.RemoveGroup:
+			removedGroups = append(removedGroups, a.GroupID)
 		case actionlog.ProduceRecord:
 			produces[a.Topic]++
 		case actionlog.AddGroup:
@@ -270,6 +272,11 @@ func TestURLMapsTheCluster(t *testing.T) {
 	}
 	if len(kills) > 0 || len(slowdowns) > 0 {
 		t.Errorf("healthy cluster emitted kills %v / slowdowns %v", kills, slowdowns)
+	}
+	// The free-play template's own consumer group c1 goes, so a fake consumer
+	// does not sit beside billing and reporting.
+	if want := []string{"c1"}; !slices.Equal(removedGroups, want) {
+		t.Errorf("remove_group = %v, want %v (the template group)", removedGroups, want)
 	}
 }
 

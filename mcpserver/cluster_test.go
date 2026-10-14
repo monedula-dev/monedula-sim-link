@@ -95,7 +95,7 @@ func TestClusterToURLEndToEnd(t *testing.T) {
 	}
 
 	// Decode the URL's actions and assert the deterministic log: template
-	// producer removed, then per-topic keyed produce bursts (no reassign/kill
+	// producer and template consumer group removed, then per-topic keyed produce bursts (no reassign/kill
 	// since 3 brokers at RF 3 are all in-sync).
 	entries, err := simurl.DecodeActionsFromURL(actionsParamOf(t, out.URL))
 	if err != nil {
@@ -120,7 +120,7 @@ func TestClusterToURLEndToEnd(t *testing.T) {
 			producesPerTopicPartition[e.Topic+"/"+strconv.Itoa(pid)]++
 		}
 	}
-	wantKinds := "remove_producer,add_producer,produce,produce,produce,remove_producer,add_producer,produce,remove_producer"
+	wantKinds := "remove_producer,remove_group,add_producer,produce,produce,produce,remove_producer,add_producer,produce,remove_producer"
 	if strings.Join(kinds, ",") != wantKinds {
 		t.Fatalf("action kinds = %v, want %v", kinds, wantKinds)
 	}

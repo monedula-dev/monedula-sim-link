@@ -11,7 +11,7 @@ import (
 // shape is echoed back by the tools after the URL self-decode, so a caller can
 // diff intent against what the playground will load.
 type ActionInput struct {
-	Kind string `json:"kind" jsonschema:"one of: produce, kill_broker, restart_broker, add_broker, remove_broker, add_producer, remove_producer, add_group, add_consumer, add_share_group, config_change, reassign_partition, change_replication_factor, set_replica_speed, tier_offload"`
+	Kind string `json:"kind" jsonschema:"one of: produce, kill_broker, restart_broker, add_broker, remove_broker, add_producer, remove_producer, add_group, remove_group, add_consumer, add_share_group, config_change, reassign_partition, change_replication_factor, set_replica_speed, tier_offload"`
 	At   int    `json:"at" jsonschema:"simulation time in milliseconds at which the action fires; actions are replayed sorted by this value (>= 0). Space actions ~1000ms apart so the playground animates them one at a time"`
 
 	BrokerID string `json:"brokerId,omitempty" jsonschema:"broker id, e.g. broker-2 (kill_broker, restart_broker, add_broker, remove_broker, set_replica_speed). The default free-play cluster names brokers broker-1..broker-N"`
@@ -24,7 +24,7 @@ type ActionInput struct {
 	Value      *string `json:"value,omitempty" jsonschema:"produce: optional record value (any text; safely escaped). config_change: the new value, e.g. 'all' or '2' or 'compact,delete'"`
 	Tombstone  bool    `json:"tombstone,omitempty" jsonschema:"produce only: true produces a null-value tombstone (mutually exclusive with value)"`
 
-	GroupID string   `json:"groupId,omitempty" jsonschema:"consumer/share group id, e.g. analytics (add_group, add_consumer, add_share_group)"`
+	GroupID string   `json:"groupId,omitempty" jsonschema:"consumer/share group id, e.g. analytics (add_group, remove_group, add_consumer, add_share_group). remove_group drops a whole consumer group with its members; the default free-play cluster starts with the group c1"`
 	Topics  []string `json:"topics,omitempty" jsonschema:"add_group only: subscribed topics (at least one; the first is the primary)"`
 	// AutoOffsetReset is add_group's optional explicit auto.offset.reset.
 	AutoOffsetReset string `json:"autoOffsetReset,omitempty" jsonschema:"add_group only: optional explicit auto.offset.reset for the new group - earliest, latest or none. earliest starts it at the log start, which is what kafka-consumer-groups --reset-offsets --to-earliest lowers to; omitted, a new group starts at the high watermark"`
@@ -135,6 +135,11 @@ func toEntry(i int, a ActionInput) (actionlog.Entry, error) {
 			return fail("field \"settings\" is echo only: this tool decodes the add_group settings field but does not write it")
 		}
 		action = actionlog.AddGroup{GroupID: a.GroupID, Topics: a.Topics, AutoOffsetReset: a.AutoOffsetReset}
+	case "remove_group":
+		if err := need("groupId", a.GroupID); err != nil {
+			return actionlog.Entry{}, err
+		}
+		action = actionlog.RemoveGroup{GroupID: a.GroupID}
 	case "add_consumer":
 		if err := need("groupId", a.GroupID); err != nil {
 			return actionlog.Entry{}, err
@@ -207,7 +212,7 @@ func toEntry(i int, a ActionInput) (actionlog.Entry, error) {
 	case "":
 		return fail("missing required field \"kind\"")
 	default:
-		return fail("unknown kind; expected one of produce, kill_broker, restart_broker, add_broker, remove_broker, add_producer, remove_producer, add_group, add_consumer, add_share_group, config_change, reassign_partition, change_replication_factor, set_replica_speed, tier_offload")
+		return fail("unknown kind; expected one of produce, kill_broker, restart_broker, add_broker, remove_broker, add_producer, remove_producer, add_group, remove_group, add_consumer, add_share_group, config_change, reassign_partition, change_replication_factor, set_replica_speed, tier_offload")
 	}
 
 	e := actionlog.Entry{At: a.At, Action: action}
@@ -282,6 +287,9 @@ func fromEntry(e actionlog.Entry) ActionInput {
 			s := GroupSettings(a.Settings)
 			out.Settings = &s
 		}
+	case actionlog.RemoveGroup:
+		out.Kind = "remove_group"
+		out.GroupID = a.GroupID
 	case actionlog.AddConsumer:
 		out.Kind = "add_consumer"
 		out.GroupID = a.GroupID

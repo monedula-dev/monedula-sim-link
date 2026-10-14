@@ -73,6 +73,14 @@ const produceSettleMs = 2000
 // beyond the snapshot-derived ones.
 const templateProducerID = "p1"
 
+// templateGroupID is the consumer group the single-DC free-play template starts
+// with. TEMPLATES['single-dc'] carries the `consumer: { id: 'c1' }` sugar, which
+// buildConsumerGroups (src/sim/engine.ts) expands into a one-member group whose
+// group id AND member id are both "c1", subscribed to the primary topic. The
+// mapping removes it (RG) at the start so a fake consumer does not sit beside
+// the real groups it adds - unless a real group maps to this very id, see below.
+const templateGroupID = "c1"
+
 // mappedTopic is one selected topic after clamping and renaming.
 type mappedTopic struct {
 	real       string
@@ -248,6 +256,58 @@ func Map(snap snapshot.ClusterSnapshot, opts Options) (*Result, error) {
 	// byte-identical to before the feature existed.
 	res.Size = buildSize(len(simBrokers), primaryShape, extraShapes, disklessTail{})
 
+	// --- Consumer groups: which real groups are mapped, and under what ids -----
+	// Map each real group that has a committed offset on at least one rendered
+	// topic. When more groups qualify than MaxGroups, the ones with the most lag
+	// are kept (pickGroups). Decided before the action log is written because the
+	// template group's removal depends on the ids the real groups end up with.
+	mappedByReal := make(map[string]*mappedTopic, len(mapped))
+	for i := range mapped {
+		mappedByReal[mapped[i].real] = &mapped[i]
+	}
+	groups := make([]snapshot.Group, len(snap.Groups))
+	copy(groups, snap.Groups)
+	sort.Slice(groups, func(i, j int) bool { return groups[i].ID < groups[j].ID })
+	var cands []groupCandidate
+	var skipped []string
+	for _, g := range groups {
+		c := groupCandidate{group: g}
+		for topic := range g.Offsets {
+			if _, ok := res.TopicNames[topic]; ok {
+				c.topics = append(c.topics, topic)
+			}
+		}
+		if len(c.topics) == 0 {
+			skipped = append(skipped, g.ID)
+			continue
+		}
+		sort.Strings(c.topics)
+		for _, topic := range c.topics {
+			for _, p := range mappedByReal[topic].parts {
+				committed, ok := g.Offsets[topic][p.ID]
+				if !ok {
+					continue
+				}
+				if d := p.LatestOffset - committed; d > 0 {
+					c.lag += d
+				}
+			}
+		}
+		cands = append(cands, c)
+	}
+	if len(skipped) > 0 {
+		warnf("skipping %s with no committed offsets on a rendered topic: %s", plural(len(skipped), "consumer group"), listNames(skipped))
+	}
+	if len(cands) > MaxGroups {
+		cands = pickGroups(cands, warnf)
+	}
+
+	groupReals := make([]string, len(cands))
+	for i, c := range cands {
+		groupReals[i] = c.group.ID
+	}
+	groupNames := assignUniqueNames(groupReals, simGroupID, maxSimIDLen)
+
 	// --- Action log ----------------------------------------------------------
 	at := startMs
 	emit := func(a actionlog.Action) {
@@ -255,8 +315,31 @@ func Map(snap snapshot.ClusterSnapshot, opts Options) (*Result, error) {
 		at += stepMs
 	}
 
-	// 1. Remove the template producer before anything else.
+	// 1. Remove the template producer and the template consumer group before
+	// anything else.
 	emit(actionlog.RemoveProducer{ProducerID: templateProducerID})
+	// Clash: a real group whose simulator id is the template group's own ("c1").
+	// The template group is then KEPT, not removed: this log never removes a group
+	// it is about to add. The cost is that add_group never replaces an existing
+	// group (applyAddGroup is a no-op for a known id), so the playground shows the
+	// real group AS the template group: subscribed to the primary topic only, with
+	// the default member beside the real ones. The warning says so
+	// (docs/mapping.md). Removing the template and adding the real group back
+	// later would give it its own topics, but it only works while the template's
+	// first scheduled consumer poll (t = consumerPollMs, 800 ms by default) fires
+	// between the two actions and dies on the missing group: remove_group does not
+	// cancel it, and a re-add that lands first would run a second poll chain.
+	templateGroupClash := false
+	for _, c := range cands {
+		if groupNames[c.group.ID] == templateGroupID {
+			templateGroupClash = true
+			warnf("consumer group %q maps to %q, the id of the playground's own default consumer group, so that default group is kept instead of removed: the simulator shows it subscribed to the primary topic %q (not to the real group's topics) with its default member %q beside the real members",
+				c.group.ID, templateGroupID, PrimaryTopicName, templateGroupID)
+		}
+	}
+	if !templateGroupClash {
+		emit(actionlog.RemoveGroup{GroupID: templateGroupID})
+	}
 
 	// 2. Reassign every partition whose real replica set differs from the
 	// simulator's default placement (set comparison: replica ORDER is preference
@@ -364,62 +447,13 @@ func Map(snap snapshot.ClusterSnapshot, opts Options) (*Result, error) {
 		emit(actionlog.RemoveProducer{ProducerID: producerID})
 	}
 
-	// 6. Consumer groups: map each real group that has a committed offset on at
-	// least one rendered topic. add_group creates the group empty; add_consumer
-	// then joins its (capped) real members. A group with measurable aggregate
-	// lag across its rendered partitions has its auto.offset.reset switched to
-	// earliest right after creation (before its first poll), so the simulator
-	// shows it draining the topic's synthetic backlog instead of starting
-	// caught up — real committed offsets are not carried exactly; see
-	// docs/mapping.md. When more groups qualify than MaxGroups, the ones with
-	// the most lag are kept (pickGroups).
-	mappedByReal := make(map[string]*mappedTopic, len(mapped))
-	for i := range mapped {
-		mappedByReal[mapped[i].real] = &mapped[i]
-	}
-	groups := make([]snapshot.Group, len(snap.Groups))
-	copy(groups, snap.Groups)
-	sort.Slice(groups, func(i, j int) bool { return groups[i].ID < groups[j].ID })
-	var cands []groupCandidate
-	var skipped []string
-	for _, g := range groups {
-		c := groupCandidate{group: g}
-		for topic := range g.Offsets {
-			if _, ok := res.TopicNames[topic]; ok {
-				c.topics = append(c.topics, topic)
-			}
-		}
-		if len(c.topics) == 0 {
-			skipped = append(skipped, g.ID)
-			continue
-		}
-		sort.Strings(c.topics)
-		for _, topic := range c.topics {
-			for _, p := range mappedByReal[topic].parts {
-				committed, ok := g.Offsets[topic][p.ID]
-				if !ok {
-					continue
-				}
-				if d := p.LatestOffset - committed; d > 0 {
-					c.lag += d
-				}
-			}
-		}
-		cands = append(cands, c)
-	}
-	if len(skipped) > 0 {
-		warnf("skipping %s with no committed offsets on a rendered topic: %s", plural(len(skipped), "consumer group"), listNames(skipped))
-	}
-	if len(cands) > MaxGroups {
-		cands = pickGroups(cands, warnf)
-	}
-
-	groupReals := make([]string, len(cands))
-	for i, c := range cands {
-		groupReals[i] = c.group.ID
-	}
-	groupNames := assignUniqueNames(groupReals, simGroupID, maxSimIDLen)
-
+	// 6. Consumer groups (selected above): add_group creates the group empty;
+	// add_consumer then joins its (capped) real members. A group with measurable
+	// aggregate lag across its rendered partitions has its auto.offset.reset
+	// switched to earliest right after creation (before its first poll), so the
+	// simulator shows it draining the topic's synthetic backlog instead of
+	// starting caught up - real committed offsets are not carried exactly; see
+	// docs/mapping.md.
 	for _, c := range cands {
 		g, lag := c.group, c.lag
 		simGroup := groupNames[g.ID]

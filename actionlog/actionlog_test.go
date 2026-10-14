@@ -55,6 +55,7 @@ func TestRoundTripEachKind(t *testing.T) {
 		"add_group multi":      {{At: 100, Action: AddGroup{GroupID: "analytics", Topics: []string{"orders", "payments"}}}},
 		"add_group earliest":   {{At: 100, Action: AddGroup{GroupID: "g1", Topics: []string{"orders"}, AutoOffsetReset: "earliest"}}},
 		"add_group multi none": {{At: 100, Action: AddGroup{GroupID: "g1", Topics: []string{"a", "b"}, AutoOffsetReset: "none"}}},
+		"remove_group":         {{At: 100, Action: RemoveGroup{GroupID: "c1"}}},
 		"add_share_group":      {{At: 100, Action: AddShareGroup{GroupID: "sg", Topic: "orders"}}},
 		"add_share_group mem":  {{At: 100, Action: AddShareGroup{GroupID: "sg", Topic: "orders", Members: []string{"m1", "m2"}}}},
 		"config acks":          {{At: 100, Action: ConfigChange{Path: "producers.p1.config.acks", Value: "all"}}},

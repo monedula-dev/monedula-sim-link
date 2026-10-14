@@ -97,8 +97,8 @@ func TestConnectEndToEnd(t *testing.T) {
 	}
 	// Deterministic log: with 3 brokers at RF 3 every replica SET is all
 	// brokers, so no reassign; all brokers online and in-sync, so no kills or
-	// slowdowns. Just the template-producer removal and the per-topic produce
-	// bursts: orders p0×2 + p1×1, payments p2×1.
+	// slowdowns. Just the template-producer and template-consumer-group removal
+	// and the per-topic produce bursts: orders p0×2 + p1×1, payments p2×1.
 	var kinds []string
 	producesPerTopicPartition := map[string]int{}
 	for _, e := range entries {
@@ -119,7 +119,7 @@ func TestConnectEndToEnd(t *testing.T) {
 			producesPerTopicPartition[p.Topic+"/"+strconv.Itoa(pid)]++
 		}
 	}
-	wantKinds := []string{"RP", "AP", "P", "P", "P", "RP", "AP", "P", "RP"}
+	wantKinds := []string{"RP", "RG", "AP", "P", "P", "P", "RP", "AP", "P", "RP"}
 	if strings.Join(kinds, ",") != strings.Join(wantKinds, ",") {
 		t.Fatalf("action kinds = %v, want %v", kinds, wantKinds)
 	}
@@ -134,7 +134,7 @@ func TestConnectEndToEnd(t *testing.T) {
 	}
 
 	// The dry run printed the decoded entries and the name mappings.
-	if !strings.Contains(stdout.String(), "RP:p1@500") || !strings.Contains(stdout.String(), "orders -> orders") {
+	if !strings.Contains(stdout.String(), "RP:p1@500") || !strings.Contains(stdout.String(), "RG:c1@750") || !strings.Contains(stdout.String(), "orders -> orders") {
 		t.Fatalf("dry-run output incomplete:\n%s", stdout.String())
 	}
 }
