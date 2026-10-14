@@ -449,46 +449,82 @@ func TestMapRemovesTemplateConsumerGroup(t *testing.T) {
 				}
 			}
 		}
-		if hasWarning(res, "default consumer group") {
-			t.Errorf("%s: no clash warning expected, got %v", name, res.Warnings)
-		}
 	}
 }
 
-// TestMapRealGroupNamedLikeTheTemplateGroupKeepsIt: a real group that maps to the
-// template group's own id "c1" is kept, so the template group is NOT removed
-// (never remove a group the log is about to add). add_group does not replace an
-// existing group, so the warning says what the playground shows for it.
-func TestMapRealGroupNamedLikeTheTemplateGroupKeepsIt(t *testing.T) {
-	res, err := Map(snapWithGroup(snapshot.Group{
-		ID: "c1", Members: []snapshot.GroupMember{{ID: "m-1", ClientID: "worker-1"}},
-		Offsets: map[string]map[int]int64{"orders": {0: 5, 1: 4, 2: 0}},
-	}), Options{})
+// TestMapRealGroupNamedLikeTheTemplateGroupIsAddedFresh: a real group whose
+// simulator id is the template group's own ("c1") changes nothing about the
+// start of the log. The template group is removed first (RG:c1@750, right after
+// RP:p1@500) and the real group is added fresh later by its normal add_group with
+// its real topics and add_consumer members. remove_group takes the whole template
+// group (and its member c1) away, and the template's first poll (t=800) dies on
+// the missing group before the first possible add_group (t>=1000), so the later
+// add_group builds a clean group: replayed through the simulator's own engine,
+// the log ends with one group c1 holding exactly the real members.
+func TestMapRealGroupNamedLikeTheTemplateGroupIsAddedFresh(t *testing.T) {
+	snap := threeBrokerSnap()
+	snap.Topics = append(snap.Topics, snapshot.Topic{
+		Name:       "payments",
+		Partitions: []snapshot.Partition{{ID: 0, Leader: "1", Replicas: []string{"1", "2", "3"}, ISR: []string{"1", "2", "3"}}},
+	})
+	snap.Groups = []snapshot.Group{{
+		ID: "c1",
+		Members: []snapshot.GroupMember{
+			{ID: "m-1", ClientID: "worker-1"}, {ID: "m-2", ClientID: "worker-2"},
+		},
+		Offsets: map[string]map[int]int64{"orders": {0: 5, 1: 4, 2: 0}, "payments": {0: 0}},
+	}}
+	res, err := Map(snap, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := actionsOfKind(t, res.Entries, "RG"); len(got) != 0 {
-		t.Fatalf("the template group must be kept when a real group maps to c1, got %v", got)
+	enc := make([]string, len(res.Entries))
+	for i, e := range res.Entries {
+		enc[i], _ = actionlog.EncodeEntry(e)
 	}
-	if ag := actionsOfKind(t, res.Entries, "AG"); len(ag) != 1 || !strings.HasPrefix(ag[0], "AG:c1:orders@") {
-		t.Fatalf("the real group is still added: %v", ag)
+	if len(enc) < 2 || enc[0] != "RP:p1@500" || enc[1] != "RG:c1@750" {
+		t.Fatalf("log starts %v, want RP:p1@500 then RG:c1@750", enc[:min(2, len(enc))])
+	}
+	if got := actionsOfKind(t, res.Entries, "RG"); len(got) != 1 {
+		t.Fatalf("RG entries = %v, want exactly the template removal", got)
+	}
+	ags := actionsOfKind(t, res.Entries, "AG")
+	if len(ags) != 1 || !strings.HasPrefix(ags[0], "AG:c1:orders~payments@") {
+		t.Fatalf("add_group = %v, want the real group with its real topics", ags)
+	}
+	acs := actionsOfKind(t, res.Entries, "AC")
+	if len(acs) != 2 || !strings.HasPrefix(acs[0], "AC:c1:worker-1@") || !strings.HasPrefix(acs[1], "AC:c1:worker-2@") {
+		t.Fatalf("add_consumer = %v, want only the real members (no template member c1)", acs)
+	}
+	// The removal comes strictly before the add, in time and in log order.
+	var rgAt, agAt int
+	for _, e := range res.Entries {
+		switch e.Action.(type) {
+		case actionlog.RemoveGroup:
+			rgAt = e.At
+		case actionlog.AddGroup:
+			agAt = e.At
+		}
+	}
+	if rgAt != 750 || agAt <= rgAt {
+		t.Fatalf("RG at %d, AG at %d: the add must come after the removal", rgAt, agAt)
 	}
 	if res.GroupNames["c1"] != "c1" {
 		t.Fatalf("GroupNames = %v", res.GroupNames)
 	}
-	if !hasWarning(res, `"c1"`, "default consumer group", "kept instead of removed", "primary topic") {
-		t.Fatalf("want a clash warning, got %v", res.Warnings)
+	if hasWarning(res, "default consumer group") || hasWarning(res, "kept instead") {
+		t.Fatalf("no clash warning any more, got %v", res.Warnings)
 	}
 	if err := actionlog.Verify(res.Entries); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// TestMapDroppedGroupNamedLikeTheTemplateGroupDoesNotClash: only a group the log
-// actually adds can clash. A real "c1" that is skipped (no committed offsets on
-// a rendered topic) or dropped by the group cap is not added, so the template
-// group is removed as usual.
-func TestMapDroppedGroupNamedLikeTheTemplateGroupDoesNotClash(t *testing.T) {
+// TestMapSkippedOrCappedGroupNamedLikeTheTemplateGroup: a real "c1" that is not
+// added (no committed offsets on a rendered topic, or dropped by the group cap)
+// leaves the usual log: the template group is removed and nothing is added
+// under its id.
+func TestMapSkippedOrCappedGroupNamedLikeTheTemplateGroup(t *testing.T) {
 	skipped := snapWithGroup(snapshot.Group{ID: "c1", Offsets: map[string]map[int]int64{"elsewhere": {0: 1}}})
 
 	capped := threeBrokerSnap()
@@ -509,8 +545,10 @@ func TestMapDroppedGroupNamedLikeTheTemplateGroupDoesNotClash(t *testing.T) {
 		if got := actionsOfKind(t, res.Entries, "RG"); len(got) != 1 || got[0] != "RG:c1@750" {
 			t.Errorf("%s: RG entries = %v, want RG:c1@750", name, got)
 		}
-		if hasWarning(res, "default consumer group") {
-			t.Errorf("%s: no clash warning expected, got %v", name, res.Warnings)
+		for _, ag := range actionsOfKind(t, res.Entries, "AG") {
+			if strings.HasPrefix(ag, "AG:c1:") {
+				t.Errorf("%s: %s adds a group under the template id", name, ag)
+			}
 		}
 	}
 }

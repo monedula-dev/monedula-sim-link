@@ -12,8 +12,8 @@ import (
 
 // TestClusterToURLProducers: the producers input is opt-in. Left out (or false),
 // the cluster is never sent DescribeProducers and the link has no producers; set,
-// the producers that wrote lately are added, with the idempotence config, and the
-// echo carries them.
+// the producers that wrote lately are added (with the simulator's default,
+// idempotent config: no config change follows) and the echo carries them.
 func TestClusterToURLProducers(t *testing.T) {
 	cluster, err := kfake.NewCluster(
 		kfake.NumBrokers(3),
@@ -85,15 +85,11 @@ func TestClusterToURLProducers(t *testing.T) {
 		switch {
 		case a.Kind == "add_producer" && a.ProducerID == "pid-4242":
 			kinds = append(kinds, "add_producer:"+a.Topic)
-		case a.Kind == "config_change" && strings.HasPrefix(a.Path, "producers.pid-4242."):
-			if a.Value == nil {
-				t.Fatalf("config_change without a value: %+v", a)
-			}
-			kinds = append(kinds, "config_change:"+a.Path+"="+*a.Value)
+		case a.Kind == "config_change" && strings.HasPrefix(a.Path, "producers.pid-"):
+			t.Errorf("unexpected producer config change: %+v", a)
 		}
 	}
-	want := "add_producer:payments,config_change:producers.pid-4242.config.enableIdempotence=true"
-	if strings.Join(kinds, ",") != want {
+	if want := "add_producer:payments"; strings.Join(kinds, ",") != want {
 		t.Fatalf("producer actions = %v, want %s\nactions: %+v", kinds, want, out.DecodedActions)
 	}
 }

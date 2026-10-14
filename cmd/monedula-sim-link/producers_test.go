@@ -37,13 +37,8 @@ func TestDemoProducers(t *testing.T) {
 	if got, want := strings.Join(producerAPs(stdout.String()), ","), "AP:pid-1001:orders,AP:pid-1002:payments"; got != want {
 		t.Fatalf("producers = %v, want %v\n%s", got, want, stdout.String())
 	}
-	for _, needle := range []string{
-		"C:producers.pid-1001.config.enableIdempotence:true@",
-		"C:producers.pid-1002.config.enableIdempotence:true@",
-	} {
-		if !strings.Contains(stdout.String(), needle) {
-			t.Errorf("dry run lacks %q:\n%s", needle, stdout.String())
-		}
+	if strings.Contains(stdout.String(), "C:producers.") {
+		t.Errorf("a new producer is idempotent already, yet the dry run has a producer config change:\n%s", stdout.String())
 	}
 	if strings.Contains(stdout.String(), "pid-1003") {
 		t.Errorf("pid-1003 wrote three hours ago, outside the default window:\n%s", stdout.String())
@@ -192,8 +187,8 @@ func TestConnectProducers(t *testing.T) {
 	if got := strings.Join(producerAPs(stdout.String()), ","); got != "AP:pid-77:orders" {
 		t.Fatalf("producers = %q, want only pid-77 (pid-88 is an hour old)\n%s", got, stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "C:producers.pid-77.config.enableIdempotence:true@") {
-		t.Errorf("idempotence config missing:\n%s", stdout.String())
+	if strings.Contains(stdout.String(), "C:producers.") {
+		t.Errorf("unexpected producer config change:\n%s", stdout.String())
 	}
 	if askedCount() == 0 {
 		t.Error("--producers sent no DescribeProducers request")

@@ -47,7 +47,9 @@ func producersCluster(writes map[string]map[int][]snapshot.ProducerWrite) snapsh
 	return snap
 }
 
-// producerEntries returns the encoded AP:pid-... and C:producers... entries.
+// producerEntries returns the encoded AP:pid-... entries, plus any config change
+// on a pid- producer (there must be none: add_producer's default is already
+// idempotent).
 func producerEntries(t *testing.T, res *Result) []string {
 	t.Helper()
 	var out []string
@@ -75,20 +77,24 @@ func mapProducersCluster(t *testing.T, snap snapshot.ClusterSnapshot, opts Optio
 	return res
 }
 
-// TestProducersAddedWithIdempotenceConfig: one producer that wrote to two
-// partitions of orders is added once, named pid-<id>, pinned to orders, with the
-// idempotence config change right after it.
-func TestProducersAddedWithIdempotenceConfig(t *testing.T) {
+// TestProducersAddedWithDefaultConfig: one producer that wrote to two partitions
+// of orders is added once, named pid-<id>, pinned to orders, and nothing else:
+// add_producer creates it with the simulator's default config (acks=all,
+// idempotence), so no config change follows.
+func TestProducersAddedWithDefaultConfig(t *testing.T) {
 	snap := producersCluster(map[string]map[int][]snapshot.ProducerWrite{
 		"orders": {0: {wrote(1001, time.Minute)}, 1: {wrote(1001, 2*time.Minute)}},
 	})
 	res := mapProducersCluster(t, snap, Options{})
-	want := []string{
-		"AP:pid-1001:orders",
-		"C:producers.pid-1001.config.enableIdempotence:true",
-	}
+	want := []string{"AP:pid-1001:orders"}
 	if got := producerEntries(t, res); !reflect.DeepEqual(got, want) {
 		t.Fatalf("producer entries = %v, want %v", got, want)
+	}
+	for _, e := range res.Entries {
+		if _, ok := e.Action.(actionlog.ConfigChange); ok {
+			enc, _ := actionlog.EncodeEntry(e)
+			t.Errorf("unexpected config change %s: a new producer is idempotent already", enc)
+		}
 	}
 	if len(res.Warnings) != 0 {
 		t.Errorf("a clean read warns about nothing, got %v", res.Warnings)
@@ -134,8 +140,8 @@ func TestProducersGoAfterTheKeyedReplayAndGroups(t *testing.T) {
 	without := mapProducersCluster(t, build(false), Options{})
 	with := mapProducersCluster(t, build(true), Options{})
 
-	if len(with.Entries) != len(without.Entries)+2 {
-		t.Fatalf("entries: %d with producers, %d without, want 2 more", len(with.Entries), len(without.Entries))
+	if len(with.Entries) != len(without.Entries)+1 {
+		t.Fatalf("entries: %d with producers, %d without, want 1 more", len(with.Entries), len(without.Entries))
 	}
 	for i, e := range without.Entries {
 		a, _ := actionlog.EncodeEntry(e)
@@ -160,12 +166,12 @@ func TestProducersGoAfterTheKeyedReplayAndGroups(t *testing.T) {
 	if maxLive > MaxProducers {
 		t.Errorf("up to %d producers alive at once, the engine renders %d", maxLive, MaxProducers)
 	}
-	last := with.Entries[len(with.Entries)-2:]
-	if ap, ok := last[0].Action.(actionlog.AddProducer); !ok || ap.ProducerID != "pid-1001" {
-		t.Errorf("second to last entry = %+v, want AP pid-1001", last[0].Action)
+	last := with.Entries[len(with.Entries)-1]
+	if ap, ok := last.Action.(actionlog.AddProducer); !ok || ap.ProducerID != "pid-1001" {
+		t.Errorf("last entry = %+v, want AP pid-1001", last.Action)
 	}
-	if last[0].At <= without.Entries[len(without.Entries)-1].At {
-		t.Errorf("producers at %d are not after the last mapped action at %d", last[0].At, without.Entries[len(without.Entries)-1].At)
+	if last.At <= without.Entries[len(without.Entries)-1].At {
+		t.Errorf("producers at %d are not after the last mapped action at %d", last.At, without.Entries[len(without.Entries)-1].At)
 	}
 }
 
@@ -201,8 +207,8 @@ func TestProducersTieBreaksByProducerId(t *testing.T) {
 	})
 	res := mapProducersCluster(t, snap, Options{})
 	got := producerEntries(t, res)
-	if len(got) != 4 || got[0] != "AP:pid-3:orders" || got[2] != "AP:pid-7:orders" {
-		t.Fatalf("entries = %v, want pid-3 before pid-7", got)
+	if want := []string{"AP:pid-3:orders", "AP:pid-7:orders"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("entries = %v, want %v (pid-3 before pid-7)", got, want)
 	}
 }
 
@@ -241,12 +247,7 @@ func TestProducersNaming(t *testing.T) {
 	})
 	res := mapProducersCluster(t, snap, Options{})
 	got := producerEntries(t, res)
-	want := []string{
-		"AP:pid-0:orders",
-		"C:producers.pid-0.config.enableIdempotence:true",
-		"AP:pid-9223372036854775807:orders",
-		"C:producers.pid-9223372036854775807.config.enableIdempotence:true",
-	}
+	want := []string{"AP:pid-0:orders", "AP:pid-9223372036854775807:orders"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("entries = %v, want %v", got, want)
 	}
@@ -300,7 +301,7 @@ func TestProducersTopicChoice(t *testing.T) {
 	for _, c := range cases {
 		res := mapProducersCluster(t, producersCluster(c.writes), Options{})
 		got := producerEntries(t, res)
-		if len(got) != 2 || got[0] != "AP:pid-1:"+c.want {
+		if len(got) != 1 || got[0] != "AP:pid-1:"+c.want {
 			t.Errorf("%s: entries = %v, want the producer pinned to %s", c.name, got, c.want)
 		}
 	}
@@ -385,7 +386,7 @@ func TestProducersOnlyRenderedTopicsCount(t *testing.T) {
 		t.Fatal("test setup: t7 should have been dropped by the topic cap")
 	}
 	got := producerEntries(t, res)
-	if want := []string{"AP:pid-1:t0", "C:producers.pid-1.config.enableIdempotence:true"}; !reflect.DeepEqual(got, want) {
+	if want := []string{"AP:pid-1:t0"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("entries = %v, want only the producer of a rendered topic %v", got, want)
 	}
 }
@@ -400,7 +401,7 @@ func TestProducersOpenTransactionStaysIdempotent(t *testing.T) {
 		"orders": {0: {txn}, 1: {txn}},
 	})
 	res := mapProducersCluster(t, snap, Options{})
-	want := []string{"AP:pid-2002:orders", "C:producers.pid-2002.config.enableIdempotence:true"}
+	want := []string{"AP:pid-2002:orders"}
 	if got := producerEntries(t, res); !reflect.DeepEqual(got, want) {
 		t.Fatalf("entries = %v, want %v", got, want)
 	}

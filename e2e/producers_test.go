@@ -86,8 +86,8 @@ func TestSnapshotProducers(t *testing.T) {
 
 // TestURLProducers: the link adds the seed client as pid-<id>, pinned to the
 // topic it wrote on the most partitions (orders and payments tie, the primary
-// wins), with the idempotence config right after; a snapshot without the opt-in
-// has no producers.
+// wins), with no config change after it (add_producer is idempotent already); a
+// snapshot without the opt-in has no producers.
 func TestURLProducers(t *testing.T) {
 	snap, _ := takeProducersSnapshot(t)
 	pid := "pid-" + strconv.FormatInt(seededProducerID(t, snap), 10)
@@ -97,18 +97,15 @@ func TestURLProducers(t *testing.T) {
 		t.Fatalf("build: %v", err)
 	}
 	var got []string
-	for i, e := range res.DecodedActions {
+	for _, e := range res.DecodedActions {
 		switch a := e.Action.(type) {
 		case actionlog.AddProducer:
 			if strings.HasPrefix(a.ProducerID, "pid-") {
 				got = append(got, "AP:"+a.ProducerID+":"+a.Topic)
-				if i+1 >= len(res.DecodedActions) {
-					t.Fatalf("add_producer %s is the last action, want its config change after it", a.ProducerID)
-				}
-				cc, ok := res.DecodedActions[i+1].Action.(actionlog.ConfigChange)
-				if !ok || cc.Path != "producers."+a.ProducerID+".config.enableIdempotence" || cc.Value != "true" {
-					t.Errorf("action after %s = %+v, want enableIdempotence=true", a.ProducerID, res.DecodedActions[i+1].Action)
-				}
+			}
+		case actionlog.ConfigChange:
+			if strings.HasPrefix(a.Path, "producers.pid-") {
+				t.Errorf("unexpected producer config change %s=%s", a.Path, a.Value)
 			}
 		}
 	}
