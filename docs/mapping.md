@@ -310,8 +310,8 @@ change states it). A producer with an open transaction (`CurrentTxnStartOffset`
 of 0 or more on some partition) cannot be shown as transactional: the URL grammar
 has no `transactional.id` (it is not on the `config_change` whitelist, and the
 size slug's producer list has no such field), and `begin_transaction` does
-nothing for a producer without one, so a `BT` action would be dropped by the
-engine without a trace. It is added as an idempotent producer and one warning
+nothing for a producer without one, so a `BT` action would be ignored by the
+engine without a trace. It is added as an idempotent producer and a warning
 names it and the partitions. A transactional producer between transactions looks
 like an idempotent one, so it is not told apart.
 
