@@ -118,7 +118,7 @@ func planProducers(rep *snapshot.ProducersRead, mapped []mappedTopic, window tim
 
 	if len(ranked) == 0 {
 		if !problems {
-			warnf("--producers: no producer wrote to the rendered topics in the last %s (DescribeProducers lists none, or only older ones); the link has no producers", windowString(window))
+			warnf("--producers: no producer wrote to the rendered topics in the last %s (idempotent or transactional producers only, which is all DescribeProducers lists, and none of those is inside the window); the link has no producers", windowString(window))
 		}
 		return nil
 	}

@@ -25,8 +25,9 @@ import (
 // never create it), ListOffsets, ListGroups, DescribeGroups, OffsetFetch and
 // DescribeConfigs, plus DescribeProducers when, and only when, the caller opts
 // in with FetchOptions.Producers; franz-go itself adds the ApiVersions
-// handshake and, to route DescribeProducers to each partition leader, its own
-// Metadata lookups (also with AllowAutoTopicCreation false). Every one is a
+// handshake, the FindCoordinator lookups the group requests go through and, to
+// route DescribeProducers to each partition leader, its own Metadata lookups
+// (also with AllowAutoTopicCreation false). Every one is a
 // read request - none of them is a JoinGroup/SyncGroup/Heartbeat (no group is
 // ever joined), an OffsetCommit (no offset is ever committed), or an
 // AlterConfigs/IncrementalAlterConfigs (no config is ever changed).

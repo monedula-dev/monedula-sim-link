@@ -359,7 +359,7 @@ func TestProducersNoneActiveSaysSo(t *testing.T) {
 	if got := producerEntries(t, res); len(got) != 0 {
 		t.Fatalf("entries = %v", got)
 	}
-	if !hasWarning(res, "--producers", "no producer wrote", "last 30m", "no producers") {
+	if !hasWarning(res, "--producers", "no producer wrote", "last 30m", "idempotent or transactional", "no producers") {
 		t.Fatalf("want a no-producers note, got %v", res.Warnings)
 	}
 }

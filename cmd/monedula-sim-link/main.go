@@ -74,8 +74,8 @@ func registerConnectFlags(fs *flag.FlagSet) *config {
 // downstream of the snapshot).
 func registerMappingFlags(fs *flag.FlagSet, c *config) {
 	fs.BoolVar(&c.clamp, "clamp", false, "when brokers, partitions or the --topics list exceed simulator caps, trim deterministically instead of failing (a wider topic selection and the consumer-group cap never fail: the most eventful are kept)")
-	fs.BoolVar(&c.producers, "producers", false, "also read the active producers (DescribeProducers, which needs READ on each selected topic and Kafka 2.8+) and add up to 4 of them to the link; a refused or unsupported read is a warning, never a failure")
-	fs.DurationVar(&c.producersWindow, "producers-window", mapping.DefaultProducersWindow, "with --producers: a producer is active when it wrote to a partition within this long before the snapshot")
+	fs.BoolVar(&c.producers, "producers", false, "also read the idempotent and transactional producers that wrote lately (DescribeProducers, which needs READ on each selected topic and Kafka 2.8+) and add up to 4 of them to the link; a producer that is neither never appears; a refused or unsupported read is a warning, never a failure")
+	fs.DurationVar(&c.producersWindow, "producers-window", mapping.DefaultProducersWindow, "with --producers: a producer is active when the record timestamp of its last write to a partition (the client's clock on CreateTime topics, the broker's on LogAppendTime) is within this long before the snapshot; brokers keep producer state for producer.id.expiration.ms (24h by default), so a longer window shows nothing extra")
 	fs.IntVar(&c.maxRecordsPerPartition, "max-records-per-partition", mapping.DefaultMaxRecordsPerPartition, "cap on synthetic trailing records produced per partition")
 	fs.StringVar(&c.baseURL, "base-url", simurl.DefaultBaseURL, "playground base URL")
 	fs.BoolVar(&c.dryRun, "dry-run", false, "also print the decoded action list, name mappings and size param")
@@ -91,9 +91,9 @@ Usage:
 
 Commands:
   connect  Snapshot a real cluster (STRICTLY READ-ONLY: ApiVersions, Metadata,
-           ListOffsets, ListGroups, DescribeGroups, OffsetFetch and
-           DescribeConfigs requests only, plus DescribeProducers with
-           --producers) and print a playground URL.
+           ListOffsets, ListGroups, FindCoordinator, DescribeGroups,
+           OffsetFetch and DescribeConfigs requests only, plus
+           DescribeProducers with --producers) and print a playground URL.
   demo     Feed a built-in cluster fixture through the same mapping (no
            cluster needed).
   mcp      Serve the Model Context Protocol over stdio, exposing the playground

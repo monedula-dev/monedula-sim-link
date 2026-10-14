@@ -280,16 +280,32 @@ request and the link has no producers, exactly as before. The flag makes
 by partition leader. It is a read, but it needs **READ on each topic**, which is
 why it is opt-in.
 
-The reply lists, per partition, the producer ids that wrote to it (idempotent
-and transactional alike) with the time of each one's last write and the first
-offset of its open transaction, if any. The mapping then:
+**This is not a list of every writer.** `DescribeProducers` reports a broker's
+producer state, and a broker only has state for **idempotent and transactional**
+producers. A producer with `enable.idempotence=false` and no transaction has no
+producer id and never appears, however busy it is. What the link shows is the
+idempotent and transactional producers that wrote lately, and nothing about the
+rest. Three more limits shape that:
 
-1. **Counts a producer as active** on a partition when its last write is within
+- The activity time is the **record timestamp** of the producer's last batch on
+  the partition, not the arrival time: the producing client's clock on a
+  `CreateTime` topic, the broker's clock on a `LogAppendTime` topic. A producer
+  that stamps event time or replays historical records can look old (or, on a
+  skewed clock, be in the future) however recently it wrote.
+- Brokers keep producer state only for `producer.id.expiration.ms` (24 hours by
+  default), so a `--producers-window` longer than that shows nothing extra.
+- A producer id is one producer instance: a restarted application is a new id.
+
+The reply lists, per partition, those producer ids with the timestamp of each
+one's last write and the first offset of its open transaction, if any. The
+mapping then:
+
+1. **Counts a producer as active** on a partition when that timestamp is within
    `--producers-window` (default 15m) before the snapshot time, taken on the
-   machine running the tool, so a large clock difference to the brokers shifts the
-   window. A write with no timestamp is not counted. Only the topics and
-   partitions the link renders count (after the topic and partition caps), because
-   a producer needs a topic to be pinned to.
+   machine running the tool, so a large clock difference to the brokers or the
+   producers shifts the window. A write with no timestamp is not counted. Only the
+   topics and partitions the link renders count (after the topic and partition
+   caps), because a producer needs a topic to be pinned to.
 2. **Ranks** the active producers by how many partitions they wrote to, then by
    the most recent write, then by producer id, and keeps the top 4 (free play
    renders at most `MAX_FREE_PLAY_PRODUCERS` = 4, and the engine ignores an
@@ -308,8 +324,8 @@ offset of its open transaction, if any. The mapping then:
    is created with the simulator's default config (`acks=all`, idempotence on), so
    there is no config change after it. The added producers are not removed again,
    so the playground's auto-loop, which is on by default in free play, produces
-   from them: the link shows who is writing. Their records come on top of the
-   synthetic ones, so offsets keep growing.
+   from them: the link keeps showing writes from the producers it found. Their
+   records come on top of the synthetic ones, so offsets keep growing.
 
 **Idempotent, not transactional.** Every producer `DescribeProducers` lists is
 idempotent or transactional, and the simulator's default for a new producer is
@@ -328,8 +344,9 @@ that could not be read, and a warning says why: `UNSUPPORTED_VERSION` or a broke
 too old to know the API (Kafka before 2.8), `CLUSTER_AUTHORIZATION_FAILED`,
 `TOPIC_AUTHORIZATION_FAILED` (naming the topics; the producers of the topics that
 were readable are still used), another error code on some partitions, or a read
-that did not finish in 5 seconds. With nothing wrong but no producer in the
-window, a warning says so.
+that did not finish in 5 seconds. With nothing wrong but no idempotent or
+transactional producer inside the window, a warning says so; that is not the same
+as "nobody wrote".
 
 ## Self-validation
 
@@ -367,8 +384,10 @@ raw-DEFLATE layout this tool emits and its own lz-string layout (see
   producers (`--producers`) and groups it adds are action-log entries
   (`add_producer`, `add_group`), and an `add_producer` has no rack field, so
   this stays unrepresented.
-- **Producer settings and transactions.** `--producers` shows who writes, not
-  how: a producer's `acks`, linger, batching and the like are not read (the
+- **Producers that are not idempotent or transactional.** They have no producer
+  id on the broker, so `--producers` cannot see them at all (see *Producers*).
+- **Producer settings and transactions.** `--producers` shows some of who writes,
+  not how: a producer's `acks`, linger, batching and the like are not read (the
   broker does not report them), so every added producer has the simulator's
   default config (`acks=all`, idempotence on), and a transactional producer is
   shown as an idempotent one (see *Producers*). Only up to 4 are shown, ranked by how many
