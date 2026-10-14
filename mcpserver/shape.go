@@ -449,17 +449,27 @@ func validateDisklessTiming(dt *DisklessTimingShape, anyDiskless bool) error {
 // four retention/tier fields left empty, plus - KIP-1163 draft, v2.0+ -
 // a 10th `~1` field appended when the topic is diskless (a
 // classic topic omits it, so every pre-diskless chunk stays byte-identical).
+//
+// min.ISR and cleanup are always written, as the simulator's own encoder does.
+// An unset min.ISR is Kafka's default 1 (what the cluster mapping writes for an
+// unread value too) and an unset cleanup is delete: the simulator's decoder drops
+// a whole extra topic whose min.ISR field is not a number, so leaving the field
+// empty for "unset" silently lost the topic from the link.
 func topicChunk(t TopicShape) string {
-	minISR := ""
+	minISR := "1"
 	if t.MinInSyncReplicas != nil {
 		minISR = strconv.Itoa(*t.MinInSyncReplicas)
+	}
+	cleanup := cleanupCodes[t.CleanupPolicy]
+	if cleanup == "" {
+		cleanup = cleanupCodes["delete"]
 	}
 	chunk := strings.Join([]string{
 		escapeSizeName(t.Name),
 		strconv.Itoa(t.Partitions),
 		strconv.Itoa(t.ReplicationFactor),
 		minISR,
-		cleanupCodes[t.CleanupPolicy], // "" when unset
+		cleanup,
 		"", "", "", "",
 	}, "~")
 	if t.DisklessEnable {

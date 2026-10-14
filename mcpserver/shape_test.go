@@ -103,7 +103,15 @@ func TestShapeDocExamples(t *testing.T) {
 				{Name: "orders", Partitions: 3, ReplicationFactor: 3},
 				{Name: "tx-events", Partitions: 2, ReplicationFactor: 2},
 			}},
-			"", "4x3x3xt*-events~2~2~~~~~~",
+			"", "4x3x3xt*-events~2~2~1~d~~~~",
+		},
+		{
+			// An extra topic with no min.ISR or cleanup set is still written with the
+			// defaults (1, delete): the simulator drops a chunk whose min.ISR field is
+			// not a number, which used to lose such a topic from the link.
+			"extra topic with nothing configured", "",
+			&ClusterShape{Brokers: 6, Topics: []TopicShape{{Name: "audit", Partitions: 2, ReplicationFactor: 2}}},
+			"", "6x3x3xaudit~2~2~1~d~~~~",
 		},
 	}
 	for _, tc := range cases {
