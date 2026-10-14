@@ -67,7 +67,13 @@ in `mapping/size_test.go` replays every one of them against `buildSize`.
   is left, tail index 10 is omitted entirely and the slug can end at the base:
   an `orders` on its defaults at 3 partitions and RF 3 is just `3x3x3`. A
   min.ISR of 1 at RF 3 with cleanup `delete` and a 7-day retention is
-  `...xxxxxxxxxx1~~604800000~~`, not `...1~d~604800000~~`.
+  `...xxxxxxxxxx1~~604800000~~`, not `...1~d~604800000~~`. The MCP
+  `build_playground_url` shape tool writes the same segment through the same
+  helper (`mapping.EncodePrimaryConfigTail`), so `minInSyncReplicas: 2` at RF 3 or
+  `cleanupPolicy: delete` on `orders` leaves the slug at `6x4x3`. In an extra
+  topic's chunk a min.ISR and a cleanup are always written; the shape tool writes
+  Kafka's default (min.ISR 1, `delete`) for one it leaves unset, because the
+  simulator drops a whole extra topic whose min.ISR field is not a number.
 - **Diskless (v2.0+, KIP-1163 draft)**: an extra topic's `disklessEnable`
   appends a 10th `~1` field; the primary diskless flag + timing (tail
   index 17) encodes via the exported `mapping.EncodeDisklessTail` (backed by
@@ -215,15 +221,16 @@ the group with `RG:c1@750` before anything else, so a fake consumer does not sit
 beside the real groups, and it does so even when the cluster has no consumer
 group at all.
 
-*A real group called `c1`.* When a group the mapping adds gets the simulator id
-`c1`, the template group is **kept**: the log never removes a group it is about to
-add, so there is no `RG:c1`. The `add_group` that follows is a no-op, because the
-simulator never replaces an existing group, so the playground shows that group as
-the template one: subscribed to the primary topic only (not to the real group's
-topics) and with the default member `c1` beside the real members. A warning says
-so. Only a group that is actually added counts: a real `c1` that is skipped (no
-committed offsets on a rendered topic) or dropped by the group cap leaves the
-template group removed as usual.
+*A real group called `c1`.* The template group is removed all the same, with
+no exception and no warning. The real group is added fresh later in the log by its
+normal `AG:c1:<its topics>` and its `AC` members, so it shows its real topics and
+members and nothing of the template's. Replayed through the simulator's own
+engine, `RP:p1@500,RG:c1@750,AG:c1:orders@1000,AC:c1:worker-1@1250` leaves one
+group `c1` with exactly the member `worker-1`: `remove_group` takes the whole
+group and its member `c1` away, the template's first consumer poll (t = 800 ms)
+fires between the removal (750 ms) and the first possible `add_group` (1000 ms)
+and dies on the missing group, and the re-added group schedules its own single
+poll chain.
 
 `fetchGroups` (`snapshot/kafka.go`) lists every group (`ListGroups`, filtered
 to `ProtocolType == "consumer"` — Kafka Connect workers and KIP-932 share
@@ -264,7 +271,7 @@ forward through the topic's synthetic trailing records (see *Data volume*
 above) — the visual effect is "this group is behind", not a byte-accurate lag
 count.
 
-## Producers: `--producers`, `AP` + idempotence
+## Producers: `--producers`, `AP`
 
 Off by default. Without `--producers` the tool sends no `DescribeProducers`
 request and the link has no producers, exactly as before. The flag makes
@@ -297,16 +304,17 @@ offset of its open transaction, if any. The mapping then:
    alphabetical).
 5. **Emits**, after everything else (the keyed replay and its transient
    producers are gone, so the replay is untouched, and the consumer groups are in
-   place): `AP:pid-<id>:<topic>` and
-   `C:producers.pid-<id>.config.enableIdempotence:true`. The added producers are
-   not removed again, so the playground's auto-loop, which is on by default in
-   free play, produces from them: the link shows who is writing. Their records
-   come on top of the synthetic ones, so offsets keep growing.
+   place), one `AP:pid-<id>:<topic>` per producer and nothing more: the producer
+   is created with the simulator's default config (`acks=all`, idempotence on), so
+   there is no config change after it. The added producers are not removed again,
+   so the playground's auto-loop, which is on by default in free play, produces
+   from them: the link shows who is writing. Their records come on top of the
+   synthetic ones, so offsets keep growing.
 
 **Idempotent, not transactional.** Every producer `DescribeProducers` lists is
-idempotent or transactional, so each is configured idempotent (the playground's
-default for a new producer is already `acks=all` with idempotence, the config
-change states it). A producer with an open transaction (`CurrentTxnStartOffset`
+idempotent or transactional, and the simulator's default for a new producer is
+already idempotent (`acks=all`, idempotence on), so each is added with that
+default config. A producer with an open transaction (`CurrentTxnStartOffset`
 of 0 or more on some partition) cannot be shown as transactional: the URL grammar
 has no `transactional.id` (it is not on the `config_change` whitelist, and the
 size slug's producer list has no such field), and `begin_transaction` does
@@ -361,9 +369,9 @@ raw-DEFLATE layout this tool emits and its own lz-string layout (see
   this stays unrepresented.
 - **Producer settings and transactions.** `--producers` shows who writes, not
   how: a producer's `acks`, linger, batching and the like are not read (the
-  broker does not report them), so every added producer has the playground's
-  defaults plus idempotence, and a transactional producer is shown as an
-  idempotent one (see *Producers*). Only up to 4 are shown, ranked by how many
+  broker does not report them), so every added producer has the simulator's
+  default config (`acks=all`, idempotence on), and a transactional producer is
+  shown as an idempotent one (see *Producers*). Only up to 4 are shown, ranked by how many
   partitions they wrote to.
 - **Remote-storage tiering config.** `remote.storage.enable` and
   `local.retention.ms` are never fetched, even though `min.insync.replicas` /
