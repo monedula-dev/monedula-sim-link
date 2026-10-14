@@ -143,7 +143,7 @@ func defaultPrimaryMinISR(rf int) int {
 	return max(1, rf-1)
 }
 
-// primaryConfigTail renders tail index 10, the primary topic's own
+// EncodePrimaryConfigTail renders tail index 10, the primary topic's own
 // min.ISR / cleanup / retention (§11.4: five "~"-joined fields, the fifth
 // local.retention.ms and always empty here), in the form the simulator itself
 // writes. Its clampPrimaryTopic keeps an override only when it deviates from the
@@ -152,32 +152,36 @@ func defaultPrimaryMinISR(rf int) int {
 // of the codec: the same cluster loads identically, but the playground rewrites
 // the link. So:
 //
-//   - min.ISR is omitted when it equals defaultPrimaryMinISR(rf) after the
-//     simulator's own [1, rf] clamp,
-//   - cleanup is omitted when it is delete (the default, which is also what an
-//     unknown policy falls back to),
-//   - retention.ms and retention.bytes are carried when set (positive),
-//   - and the whole segment is "" when every field is omitted, so buildSize drops
-//     tail index 10 and the slug can end at the base.
-func primaryConfigTail(p *topicShape, rf int) string {
-	minISR := ""
-	if p.minISR > 0 {
-		v := min(max(p.minISR, 1), max(1, rf))
+//   - min.ISR (0 = unset) is omitted when it equals defaultPrimaryMinISR(rf) after
+//     the simulator's own [1, rf] clamp,
+//   - cleanup ("" = unset) is omitted when it is delete (the default, which is
+//     also what an unknown policy falls back to),
+//   - retention.ms and retention.bytes (nil = unset) are carried when set,
+//   - and the whole segment is "" when every field is omitted, so the caller
+//     leaves tail index 10 out and the slug can end at the base.
+//
+// rf is the primary topic's replication factor, the one in the slug's base.
+// Exported so the declarative shape generator (mcpserver) writes the identical
+// segment instead of re-deriving it.
+func EncodePrimaryConfigTail(rf, minISR int, cleanupPolicy string, retentionMs, retentionBytes *int64) string {
+	minISRField := ""
+	if minISR > 0 {
+		v := min(max(minISR, 1), max(1, rf))
 		if v != defaultPrimaryMinISR(rf) {
-			minISR = strconv.Itoa(v)
+			minISRField = strconv.Itoa(v)
 		}
 	}
 	cleanup := ""
-	if p.cleanupPolicy != "" {
-		if code := cleanupCode(p.cleanupPolicy); code != "d" {
+	if cleanupPolicy != "" {
+		if code := cleanupCode(cleanupPolicy); code != "d" {
 			cleanup = code
 		}
 	}
-	retMs, retBytes := retStr(p.retentionMs), retStr(p.retentionBytes)
-	if minISR == "" && cleanup == "" && retMs == "" && retBytes == "" {
+	retMs, retBytes := retStr(retentionMs), retStr(retentionBytes)
+	if minISRField == "" && cleanup == "" && retMs == "" && retBytes == "" {
 		return ""
 	}
-	return strings.Join([]string{minISR, cleanup, retMs, retBytes, ""}, "~")
+	return strings.Join([]string{minISRField, cleanup, retMs, retBytes, ""}, "~")
 }
 
 // buildSize renders the free-play single-DC size slug (playground-url-api.md
@@ -203,7 +207,7 @@ func primaryConfigTail(p *topicShape, rf int) string {
 // is never fetched, so those two trailing fields stay empty. A diskless extra
 // topic (t.disklessEnable) appends a 10th field `1`; a classic extra topic
 // omits it, so every pre-diskless slug re-encodes byte-identically. The primary
-// topic's tail index 10 is canonical, not exhaustive (primaryConfigTail): a
+// topic's tail index 10 is canonical, not exhaustive (EncodePrimaryConfigTail): a
 // field equal to the simulator's default is left out. All values are
 // pre-clamped by the caller, so the slug decodes verbatim (it is a fixed point
 // of the simulator's decode and re-encode).
@@ -234,7 +238,7 @@ func buildSize(brokerCount int, primary *topicShape, extras []topicShape, diskle
 		tail[0] = strings.Join(enc, "!")
 	}
 	if pConfig != nil {
-		if seg := primaryConfigTail(pConfig, pRF); seg != "" {
+		if seg := EncodePrimaryConfigTail(pRF, pConfig.minISR, pConfig.cleanupPolicy, pConfig.retentionMs, pConfig.retentionBytes); seg != "" {
 			tail[10] = seg
 		}
 	}

@@ -468,15 +468,17 @@ func topicChunk(t TopicShape) string {
 	return chunk
 }
 
-// primaryConfigChunk renders tail index 10 (5 "~"-joined fields) when the
-// primary topic overrides min.ISR or cleanup; "" when neither is set.
+// primaryConfigChunk renders tail index 10 (5 "~"-joined fields) in the
+// simulator's canonical form, through the helper the cluster mapping uses
+// (mapping.EncodePrimaryConfigTail): a field equal to the simulator's default is
+// left out, because clampPrimaryTopic drops it on decode. That is cleanup
+// `delete` and a min.ISR equal to max(1, RF-1) for the primary's RF; "" when
+// nothing is left, in which case the caller leaves tail index 10 out. The shape
+// carries no retention.
 func primaryConfigChunk(t TopicShape) string {
-	if t.MinInSyncReplicas == nil && t.CleanupPolicy == "" {
-		return ""
-	}
-	minISR := ""
+	minISR := 0
 	if t.MinInSyncReplicas != nil {
-		minISR = strconv.Itoa(*t.MinInSyncReplicas)
+		minISR = *t.MinInSyncReplicas
 	}
-	return strings.Join([]string{minISR, cleanupCodes[t.CleanupPolicy], "", "", ""}, "~")
+	return mapping.EncodePrimaryConfigTail(t.ReplicationFactor, minISR, t.CleanupPolicy, nil, nil)
 }

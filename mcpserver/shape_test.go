@@ -1,7 +1,10 @@
 package mcpserver
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -40,10 +43,59 @@ func TestShapeDocExamples(t *testing.T) {
 		{"diskless-3az default", "diskless-3az", nil, "diskless-3az", ""},
 		{"diskless-3az default shape", "diskless-3az", &ClusterShape{Brokers: 6}, "diskless-3az", ""},
 		{"diskless-3az custom brokers", "diskless-3az", &ClusterShape{Brokers: 8}, "diskless-3az", "8x3x3"},
+		// The primary topic's tail index 10 is canonical, the form the simulator
+		// itself re-encodes to (clampPrimaryTopic drops a min.ISR equal to
+		// max(1, RF-1) and cleanup delete). Each wanted slug below is a SIZE
+		// fixed point of the real TypeScript codec.
 		{
-			"primary min.ISR tail", "",
+			"primary min.ISR below the default", "",
+			&ClusterShape{Brokers: 6, Topics: []TopicShape{{Name: "orders", Partitions: 4, ReplicationFactor: 3, MinInSyncReplicas: intp(1)}}},
+			"", "6x4x3xxxxxxxxxxx1~~~~",
+		},
+		{
+			"primary min.ISR above the default", "",
+			&ClusterShape{Brokers: 6, Topics: []TopicShape{{Name: "orders", Partitions: 4, ReplicationFactor: 3, MinInSyncReplicas: intp(3)}}},
+			"", "6x4x3xxxxxxxxxxx3~~~~",
+		},
+		{
+			"primary default min.ISR is left out", "",
 			&ClusterShape{Brokers: 6, Topics: []TopicShape{{Name: "orders", Partitions: 4, ReplicationFactor: 3, MinInSyncReplicas: intp(2)}}},
-			"", "6x4x3xxxxxxxxxxx2~~~~",
+			"", "6x4x3",
+		},
+		{
+			"primary default min.ISR and delete are both left out", "",
+			&ClusterShape{Brokers: 6, Topics: []TopicShape{{Name: "orders", Partitions: 4, ReplicationFactor: 3, MinInSyncReplicas: intp(2), CleanupPolicy: "delete"}}},
+			"", "6x4x3",
+		},
+		{
+			"primary delete alone is left out", "",
+			&ClusterShape{Brokers: 6, Topics: []TopicShape{{Name: "orders", Partitions: 4, ReplicationFactor: 3, CleanupPolicy: "delete"}}},
+			"", "6x4x3",
+		},
+		{
+			"primary compact keeps the cleanup code only", "",
+			&ClusterShape{Brokers: 6, Topics: []TopicShape{{Name: "orders", Partitions: 4, ReplicationFactor: 3, MinInSyncReplicas: intp(2), CleanupPolicy: "compact"}}},
+			"", "6x4x3xxxxxxxxxxx~c~~~",
+		},
+		{
+			"primary compact,delete with a non-default min.ISR", "",
+			&ClusterShape{Brokers: 6, Topics: []TopicShape{{Name: "orders", Partitions: 4, ReplicationFactor: 3, MinInSyncReplicas: intp(3), CleanupPolicy: "compact,delete"}}},
+			"", "6x4x3xxxxxxxxxxx3~cd~~~",
+		},
+		{
+			"primary min.ISR 1 at RF 2 is the default", "",
+			&ClusterShape{Brokers: 3, Topics: []TopicShape{{Name: "orders", Partitions: 1, ReplicationFactor: 2, MinInSyncReplicas: intp(1)}}},
+			"", "3x1x2",
+		},
+		{
+			"primary min.ISR 2 at RF 2 is not", "",
+			&ClusterShape{Brokers: 3, Topics: []TopicShape{{Name: "orders", Partitions: 1, ReplicationFactor: 2, MinInSyncReplicas: intp(2)}}},
+			"", "3x1x2xxxxxxxxxxx2~~~~",
+		},
+		{
+			"primary compact beside rack-aware placement", "",
+			&ClusterShape{Brokers: 4, RackAware: true, Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 3, CleanupPolicy: "compact"}}},
+			"", "4x3x3xxxx1xxxxxxx~c~~~",
 		},
 		{
 			"name with x escaped", "",
@@ -317,5 +369,77 @@ func TestStretched3PartitionCap(t *testing.T) {
 				t.Errorf("error %q should name the count and the cap", err)
 			}
 		})
+	}
+}
+
+// TestShapePrimaryTailMatchesTypeScriptFixtures replays the SIZE fixtures the
+// cluster mapping is pinned to (mapping/testdata/ts-fixtures.txt, dumped from the
+// real TypeScript codec) through the declarative shape generator: for every
+// single-zone size with no extra topic, retention or diskless field, a shape that
+// spells out the primary's min.ISR and cleanup, defaults included, must produce
+// the simulator's canonical slug (nothing at all when that is the topology
+// default 3x3x3). Both Go entry points into tail index 10 share one helper; this
+// proves the shape generator's inputs reach it.
+func TestShapePrimaryTailMatchesTypeScriptFixtures(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "mapping", "testdata", "ts-fixtures.txt"))
+	if err != nil {
+		t.Fatalf("read fixtures: %v", err)
+	}
+	checked := 0
+	for _, line := range strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n") {
+		if !strings.HasPrefix(line, "SIZE ") {
+			continue
+		}
+		fields := strings.SplitN(strings.TrimPrefix(line, "SIZE "), " ", 4)
+		if len(fields) != 4 || fields[1] != "=>" || !strings.HasPrefix(fields[3], ":: ") {
+			t.Fatalf("malformed SIZE fixture: %q", line)
+		}
+		canonical := fields[2]
+		var sz struct {
+			BrokersPerZone    []int  `json:"brokersPerZone"`
+			Partitions        int    `json:"partitions"`
+			ReplicationFactor int    `json:"replicationFactor"`
+			ExtraTopics       []any  `json:"extraTopics"`
+			PrimaryMinIsr     *int   `json:"primaryMinIsr"`
+			PrimaryCleanup    string `json:"primaryCleanup"`
+			RetentionMs       *int64 `json:"primaryRetentionMs"`
+			RetentionBytes    *int64 `json:"primaryRetentionBytes"`
+			PrimaryDiskless   bool   `json:"primaryDiskless"`
+			DisklessTiming    any    `json:"disklessTiming"`
+			ConsumerGroups    []any  `json:"consumerGroups"`
+		}
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(fields[3], ":: ")), &sz); err != nil {
+			t.Fatalf("%s: fixture json: %v", canonical, err)
+		}
+		if len(sz.BrokersPerZone) != 1 || len(sz.ExtraTopics) > 0 || sz.RetentionMs != nil || sz.RetentionBytes != nil ||
+			sz.PrimaryDiskless || sz.DisklessTiming != nil || len(sz.ConsumerGroups) > 0 {
+			continue // beyond what the shape tool can express
+		}
+		primary := TopicShape{
+			Name: "orders", Partitions: sz.Partitions, ReplicationFactor: sz.ReplicationFactor,
+			MinInSyncReplicas: intp(max(1, sz.ReplicationFactor-1)), CleanupPolicy: "delete",
+		}
+		if sz.PrimaryMinIsr != nil {
+			primary.MinInSyncReplicas = sz.PrimaryMinIsr
+		}
+		if sz.PrimaryCleanup != "" {
+			primary.CleanupPolicy = sz.PrimaryCleanup
+		}
+		_, size, _, err := shapeToParams("", &ClusterShape{Brokers: sz.BrokersPerZone[0], Topics: []TopicShape{primary}})
+		if err != nil {
+			t.Errorf("%s: shapeToParams: %v", canonical, err)
+			continue
+		}
+		want := canonical
+		if canonical == "3x3x3" {
+			want = "" // the topology default is omitted from the URL
+		}
+		if size != want {
+			t.Errorf("shape for %s: size = %q, want %q", canonical, size, want)
+		}
+		checked++
+	}
+	if checked < 8 {
+		t.Fatalf("only %d usable SIZE fixtures; was the fixture file reshaped?", checked)
 	}
 }
