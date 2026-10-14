@@ -136,6 +136,50 @@ func retStr(v *int64) string {
 	return strconv.FormatInt(*v, 10)
 }
 
+// defaultPrimaryMinISR mirrors defaultPrimaryMinIsr in freePlayTopologies.ts:
+// the primary topic's min.insync.replicas when the session does not override
+// it, Kafka's acks=all durability convention of RF-1 (at least 1).
+func defaultPrimaryMinISR(rf int) int {
+	return max(1, rf-1)
+}
+
+// primaryConfigTail renders tail index 10, the primary topic's own
+// min.ISR / cleanup / retention (§11.4: five "~"-joined fields, the fifth
+// local.retention.ms and always empty here), in the form the simulator itself
+// writes. Its clampPrimaryTopic keeps an override only when it deviates from the
+// topic's derived default, so an equal-to-default field is dropped on decode and
+// re-encodes empty. Emitting those fields would make the slug a non-fixed point
+// of the codec: the same cluster loads identically, but the playground rewrites
+// the link. So:
+//
+//   - min.ISR is omitted when it equals defaultPrimaryMinISR(rf) after the
+//     simulator's own [1, rf] clamp,
+//   - cleanup is omitted when it is delete (the default, which is also what an
+//     unknown policy falls back to),
+//   - retention.ms and retention.bytes are carried when set (positive),
+//   - and the whole segment is "" when every field is omitted, so buildSize drops
+//     tail index 10 and the slug can end at the base.
+func primaryConfigTail(p *topicShape, rf int) string {
+	minISR := ""
+	if p.minISR > 0 {
+		v := min(max(p.minISR, 1), max(1, rf))
+		if v != defaultPrimaryMinISR(rf) {
+			minISR = strconv.Itoa(v)
+		}
+	}
+	cleanup := ""
+	if p.cleanupPolicy != "" {
+		if code := cleanupCode(p.cleanupPolicy); code != "d" {
+			cleanup = code
+		}
+	}
+	retMs, retBytes := retStr(p.retentionMs), retStr(p.retentionBytes)
+	if minISR == "" && cleanup == "" && retMs == "" && retBytes == "" {
+		return ""
+	}
+	return strings.Join([]string{minISR, cleanup, retMs, retBytes, ""}, "~")
+}
+
 // buildSize renders the free-play single-DC size slug (playground-url-api.md
 // §9/§12): base "<brokers>x<partitions>x<rf>" describing the fixed "orders"
 // primary topic, plus tail segments for extra topics (index 0), when the
@@ -158,9 +202,11 @@ func retStr(v *int64) string {
 // "delete" (the simulator's own defaults) when unread — remote-storage tiering
 // is never fetched, so those two trailing fields stay empty. A diskless extra
 // topic (t.disklessEnable) appends a 10th field `1`; a classic extra topic
-// omits it, so every pre-diskless slug re-encodes byte-identically. All values
-// are pre-clamped by the caller, so the slug decodes verbatim (it is a fixed
-// point of the simulator's clampFreePlaySize).
+// omits it, so every pre-diskless slug re-encodes byte-identically. The primary
+// topic's tail index 10 is canonical, not exhaustive (primaryConfigTail): a
+// field equal to the simulator's default is left out. All values are
+// pre-clamped by the caller, so the slug decodes verbatim (it is a fixed point
+// of the simulator's decode and re-encode).
 func buildSize(brokerCount int, primary *topicShape, extras []topicShape, diskless disklessTail) string {
 	pParts, pRF := 1, 1
 	var pConfig *topicShape
@@ -187,16 +233,10 @@ func buildSize(brokerCount int, primary *topicShape, extras []topicShape, diskle
 		}
 		tail[0] = strings.Join(enc, "!")
 	}
-	if pConfig != nil && (pConfig.minISR > 0 || pConfig.cleanupPolicy != "" || pConfig.retentionMs != nil || pConfig.retentionBytes != nil) {
-		minISR := ""
-		if pConfig.minISR > 0 {
-			minISR = strconv.Itoa(pConfig.minISR)
+	if pConfig != nil {
+		if seg := primaryConfigTail(pConfig, pRF); seg != "" {
+			tail[10] = seg
 		}
-		cleanup := ""
-		if pConfig.cleanupPolicy != "" {
-			cleanup = cleanupCode(pConfig.cleanupPolicy)
-		}
-		tail[10] = strings.Join([]string{minISR, cleanup, retStr(pConfig.retentionMs), retStr(pConfig.retentionBytes), ""}, "~")
 	}
 	if !diskless.empty() {
 		tail[17] = diskless.encode()

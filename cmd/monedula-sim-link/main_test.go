@@ -82,8 +82,11 @@ func TestConnectEndToEnd(t *testing.T) {
 	// for every topic, min.insync.replicas=1 and cleanup.policy=delete — the
 	// tail carries the primary's (index 10) and payments' (index 0) real
 	// DescribeConfigs values; retention.bytes stays empty (kfake's -1/disabled
-	// sentinel is treated as unset, see snapshot/kafka.go).
-	const wantSize = "3x2x3xpayments~3~3~1~d~604800000~~~xxxxxxxxxx1~d~604800000~~"
+	// sentinel is treated as unset, see snapshot/kafka.go). Index 10 is canonical:
+	// the primary's min.ISR 1 is not the RF-3 default (2) so it is kept, but its
+	// cleanup `delete` is the default and is left out (`1~~604800000~~`, the form
+	// the simulator itself re-encodes to).
+	const wantSize = "3x2x3xpayments~3~3~1~d~604800000~~~xxxxxxxxxx1~~604800000~~"
 	if got := q.Get("size"); got != wantSize {
 		t.Fatalf("size = %q, want %q", got, wantSize)
 	}

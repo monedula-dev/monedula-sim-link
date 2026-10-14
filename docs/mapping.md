@@ -37,10 +37,14 @@ index 10 for the primary topic's own min.ISR/cleanup/retention when it
 carries a config override (§11.4), and - KIP-1163 draft, v2.0+ -
 tail index 17 for the primary diskless flag + diskless timing when either is
 set (§11.3/§11.4). Values are pre-clamped to the
-simulator's own caps so the slug is a **fixed point** of the simulator's
-`clampFreePlaySize` — what the URL says is exactly what renders. The size
-fixtures in `mapping/size_test.go` were round-tripped through the real
-TypeScript codec (`src/sim/freePlayTopologies.ts`) to prove that.
+simulator's own caps and written in the simulator's own canonical form, so the
+slug is a **fixed point** of its codec: decoding it with `decodeFreePlaySize`
+and encoding the result with `encodeFreePlaySize` gives the same string back.
+What the URL says is exactly what renders, and the playground never rewrites
+the link when it loads it. The `SIZE` lines in `mapping/testdata/ts-fixtures.txt`
+are that round trip, run through the real TypeScript codec
+(`src/sim/freePlayTopologies.ts`), and `TestBuildSizeIsFixedPointOfTypeScript`
+in `mapping/size_test.go` replays every one of them against `buildSize`.
 
 - **No real `orders` topic selected** → the base still describes the primary,
   as a minimal `1x1` placeholder (the primary cannot be removed via the URL).
@@ -54,7 +58,15 @@ TypeScript codec (`src/sim/freePlayTopologies.ts`) to prove that.
   default); remote-storage tiering is never fetched, so those two trailing
   fields stay empty.
 - **Primary topic config** (tail index 10) carries the same four fields for
-  `orders` when any of them is known — omitted entirely when none is.
+  `orders`, but only those that differ from the simulator's defaults, because
+  the simulator drops a field equal to its default when it decodes the slug
+  (`clampPrimaryTopic`). Cleanup `delete` is left out. `min.insync.replicas` is
+  left out when it equals the default for the primary's RF, `max(1, RF-1)` (so 2
+  at RF 3, and 1 at RF 1 and RF 2). Retention is carried when set. When nothing
+  is left, tail index 10 is omitted entirely and the slug can end at the base:
+  an `orders` on its defaults at 3 partitions and RF 3 is just `3x3x3`. A
+  min.ISR of 1 at RF 3 with cleanup `delete` and a 7-day retention is
+  `...xxxxxxxxxx1~~604800000~~`, not `...1~d~604800000~~`.
 - **Diskless (v2.0+, KIP-1163 draft)**: an extra topic's `disklessEnable`
   appends a 10th `~1` field; the primary diskless flag + timing (tail
   index 17) encodes via the exported `mapping.EncodeDisklessTail` (backed by

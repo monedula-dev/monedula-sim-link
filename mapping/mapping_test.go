@@ -28,6 +28,8 @@ func threeBrokerSnap() snapshot.ClusterSnapshot {
 	}
 }
 
+func intPtr(v int) *int { return &v }
+
 // actionsOfKind filters entries via their encoded form's kind prefix.
 func actionsOfKind(t *testing.T, entries []actionlog.Entry, kind string) []string {
 	t.Helper()
@@ -112,6 +114,37 @@ func TestMapMaxRecordsCap(t *testing.T) {
 	}
 	if got := len(actionsOfKind(t, res.Entries, "P")); got != 4 { // 2 + 2 + 0
 		t.Fatalf("want 4 produces at cap 2, got %d", got)
+	}
+}
+
+// TestMapPrimaryConfigIsCanonical: the primary topic's DescribeConfigs values
+// reach the slug only where they differ from the simulator's defaults (min.ISR
+// RF-1, cleanup delete), so the slug is a fixed point of its codec.
+func TestMapPrimaryConfigIsCanonical(t *testing.T) {
+	week := int64(604800000)
+	cases := []struct {
+		name   string
+		config snapshot.TopicConfig
+		want   string
+	}{
+		{"defaults only", snapshot.TopicConfig{CleanupPolicy: "delete", MinInSyncReplicas: intPtr(2)}, "3x3x3"},
+		{"unread config", snapshot.TopicConfig{}, "3x3x3"},
+		{"min.ISR below the default", snapshot.TopicConfig{CleanupPolicy: "delete", MinInSyncReplicas: intPtr(1)}, "3x3x3xxxxxxxxxxx1~~~~"},
+		{"min.ISR above the default", snapshot.TopicConfig{CleanupPolicy: "delete", MinInSyncReplicas: intPtr(3)}, "3x3x3xxxxxxxxxxx3~~~~"},
+		{"compact on the default min.ISR", snapshot.TopicConfig{CleanupPolicy: "compact", MinInSyncReplicas: intPtr(2)}, "3x3x3xxxxxxxxxxx~c~~~"},
+		{"retention on the defaults", snapshot.TopicConfig{CleanupPolicy: "delete", MinInSyncReplicas: intPtr(2), RetentionMs: &week}, "3x3x3xxxxxxxxxxx~~604800000~~"},
+		{"min.ISR 1 with 7 day retention", snapshot.TopicConfig{CleanupPolicy: "delete", MinInSyncReplicas: intPtr(1), RetentionMs: &week}, "3x3x3xxxxxxxxxxx1~~604800000~~"},
+	}
+	for _, c := range cases {
+		snap := threeBrokerSnap()
+		snap.Topics[0].Config = c.config
+		res, err := Map(snap, Options{})
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if res.Size != c.want {
+			t.Errorf("%s: size = %q, want %q", c.name, res.Size, c.want)
+		}
 	}
 }
 
