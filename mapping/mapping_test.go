@@ -509,6 +509,16 @@ func TestMapRealGroupNamedLikeTheTemplateGroupIsAddedFresh(t *testing.T) {
 	if rgAt != 750 || agAt <= rgAt {
 		t.Fatalf("RG at %d, AG at %d: the add must come after the removal", rgAt, agAt)
 	}
+	// The re-added group is clean only because the template's first consumer poll
+	// (t = 800 ms, the free-play consumerPollMs) has already fired, found no group
+	// c1 and died: remove_group does not cancel scheduled polls, so an add_group
+	// that landed before it would run a second poll chain beside its own. The
+	// engine replays each action at its own time, so the add has to be later than
+	// 800 ms (the earliest slot is 1000 ms).
+	const templateFirstPollMs = 800
+	if agAt <= templateFirstPollMs {
+		t.Fatalf("AG at %d is not after the template's first poll at %d ms", agAt, templateFirstPollMs)
+	}
 	if res.GroupNames["c1"] != "c1" {
 		t.Fatalf("GroupNames = %v", res.GroupNames)
 	}

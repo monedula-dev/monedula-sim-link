@@ -150,13 +150,17 @@ SIZE 5x4x3xwal~4~3~1~d~~~~~1xxxxxxxxxxxxxxxxx.900 => 5x4x3xwal~4~3~1~d~~~~~1xxxx
 # diskless on its own, with no caller topic ever setting disklessEnable -
 # clampDisklessFields' "kept only when some topic is diskless" check counts
 # templateTopics(type, ...), so disklessTiming alone is accepted for this
-# preset. Generated via clampFreePlaySize('diskless-3az', {brokersPerZone:[6],
-# partitions:3, replicationFactor:3, disklessTiming:{commitIntervalMs:500}})
-# then encodeFreePlaySize on the clamped result (script deleted after copying
-# its stdout line below).
-SIZE 6x3x3xxxxxxxxxxxxxxxxxx500. => 6x3x3xxxxxxxxxxxxxxxxxx500. :: {"brokersPerZone":[6],"partitions":3,"replicationFactor":3,"disklessTiming":{"commitIntervalMs":500}}
+# preset. 2026-10-14: that line is a diskless-3az line, and single-dc drops a
+# timing with no diskless topic (it decodes to plain `6x3x3` there), so it no
+# longer reads as a `SIZE` (single-dc) line. It is regenerated below, with a second
+# one carrying both timings, as `SIZE-DISKLESS-3AZ` lines: each is
+# decodeFreePlaySize('diskless-3az', <raw>) then encodeFreePlaySize on the result,
+# run through the real simulator codec by a throwaway tsx script (not checked in).
+# mapping.TestBuildSize* replay only the `SIZE` lines; mcpserver replays these.
+SIZE-DISKLESS-3AZ 6x3x3xxxxxxxxxxxxxxxxxx500. => 6x3x3xxxxxxxxxxxxxxxxxx500. :: {"brokersPerZone":[6],"partitions":3,"replicationFactor":3,"disklessTiming":{"commitIntervalMs":500}}
+SIZE-DISKLESS-3AZ 6x3x3xxxxxxxxxxxxxxxxxx250.900 => 6x3x3xxxxxxxxxxxxxxxxxx250.900 :: {"brokersPerZone":[6],"partitions":3,"replicationFactor":3,"disklessTiming":{"commitIntervalMs":250,"uploadMs":900}}
 # 2026-10-14: the primary topic's tail index 10 is now canonical (mapping/size.go
-# primaryConfigTail). The simulator's clampPrimaryTopic drops a primary min.ISR
+# EncodePrimaryConfigTail). The simulator's clampPrimaryTopic drops a primary min.ISR
 # equal to defaultPrimaryMinIsr(rf) = max(1, rf-1) and a cleanup of `delete`, and
 # a size with no override left has no tail 10 at all, so the old output
 # (`...1~d~604800000~~`) decoded fine but re-encoded to `...1~~604800000~~`.

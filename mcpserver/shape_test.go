@@ -451,3 +451,50 @@ func TestShapePrimaryTailMatchesTypeScriptFixtures(t *testing.T) {
 		t.Fatalf("only %d usable SIZE fixtures; was the fixture file reshaped?", checked)
 	}
 }
+
+// TestShapeDisklessTimingMatchesTypeScriptFixtures replays the SIZE-DISKLESS-3AZ
+// lines of mapping/testdata/ts-fixtures.txt, dumped from the real TypeScript
+// codec with the diskless-3az topology: the preset's own diskless topic makes a
+// timing alone valid there (single-dc drops it), and shapeToParams must write the
+// same slug.
+func TestShapeDisklessTimingMatchesTypeScriptFixtures(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "mapping", "testdata", "ts-fixtures.txt"))
+	if err != nil {
+		t.Fatalf("read fixtures: %v", err)
+	}
+	checked := 0
+	for _, line := range strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n") {
+		if !strings.HasPrefix(line, "SIZE-DISKLESS-3AZ ") {
+			continue
+		}
+		fields := strings.SplitN(strings.TrimPrefix(line, "SIZE-DISKLESS-3AZ "), " ", 4)
+		if len(fields) != 4 || fields[1] != "=>" || !strings.HasPrefix(fields[3], ":: ") {
+			t.Fatalf("malformed fixture: %q", line)
+		}
+		var sz struct {
+			BrokersPerZone []int `json:"brokersPerZone"`
+			DisklessTiming struct {
+				CommitIntervalMs *int `json:"commitIntervalMs"`
+				UploadMs         *int `json:"uploadMs"`
+			} `json:"disklessTiming"`
+		}
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(fields[3], ":: ")), &sz); err != nil {
+			t.Fatalf("%s: fixture json: %v", fields[2], err)
+		}
+		cluster, size, _, err := shapeToParams("diskless-3az", &ClusterShape{
+			Brokers:        sz.BrokersPerZone[0],
+			DisklessTiming: &DisklessTimingShape{CommitIntervalMs: sz.DisklessTiming.CommitIntervalMs, UploadMs: sz.DisklessTiming.UploadMs},
+		})
+		if err != nil {
+			t.Errorf("%s: shapeToParams: %v", fields[2], err)
+			continue
+		}
+		if cluster != "diskless-3az" || size != fields[2] {
+			t.Errorf("shape for %s: cluster %q size %q", fields[2], cluster, size)
+		}
+		checked++
+	}
+	if checked != 2 {
+		t.Fatalf("replayed %d SIZE-DISKLESS-3AZ fixtures, want 2", checked)
+	}
+}

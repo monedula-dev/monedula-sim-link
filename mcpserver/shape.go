@@ -45,8 +45,8 @@ type TopicShape struct {
 	Name              string `json:"name" jsonschema:"topic name: letters, digits, '.', '_', '-', at most 40 chars. Note: a name containing '.' cannot be referenced by produce/reassign actions (the action grammar reserves '.'), so prefer '_' or '-'"`
 	Partitions        int    `json:"partitions" jsonschema:"partition count (>= 1)"`
 	ReplicationFactor int    `json:"replicationFactor" jsonschema:"replication factor (>= 1, at most the broker count of the hosting zone set)"`
-	MinInSyncReplicas *int   `json:"minInSyncReplicas,omitempty" jsonschema:"optional min.insync.replicas (1..replicationFactor)"`
-	CleanupPolicy     string `json:"cleanupPolicy,omitempty" jsonschema:"optional cleanup policy: delete, compact, or compact,delete"`
+	MinInSyncReplicas *int   `json:"minInSyncReplicas,omitempty" jsonschema:"optional min.insync.replicas (1..replicationFactor). Unset means the simulator's default: 1 for an extra topic (Kafka's own default), max(1, replicationFactor-1) for the primary topic 'orders'"`
+	CleanupPolicy     string `json:"cleanupPolicy,omitempty" jsonschema:"optional cleanup policy: delete, compact, or compact,delete. Unset means delete"`
 	// DisklessEnable is KIP-1163 draft `diskless.enable` (v2.0+).
 	// On the primary ("orders") topic it sets the free-play session's primary
 	// diskless flag (size tail index 17); on any other topic it appends the
