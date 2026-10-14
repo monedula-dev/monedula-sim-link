@@ -50,6 +50,10 @@ type ConnectParams struct {
 	Username      string
 	Password      string
 	Timeout       time.Duration
+	// Producers also sends DescribeProducers (needs READ on each selected topic)
+	// so the mapping can add the producers that wrote lately. Off by default: a
+	// snapshot without it never sends that request.
+	Producers bool
 }
 
 // Snapshot connects READ-ONLY and takes a point-in-time snapshot, returning it
@@ -74,7 +78,7 @@ func Snapshot(ctx context.Context, p ConnectParams) (snapshot.ClusterSnapshot, [
 	}
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	return client.Fetch(cctx, sel)
+	return client.FetchWith(cctx, sel, snapshot.FetchOptions{Producers: p.Producers})
 }
 
 func buildSelection(topics []string, regexStr string) (snapshot.Selection, error) {
@@ -130,6 +134,10 @@ type BuildOptions struct {
 	// Force downgrades the compressed-form and over-length checks from hard
 	// errors to warnings. It never overrides the lossless round-trip check.
 	Force bool
+	// ProducersWindow is how long before the snapshot a producer's last write may
+	// be for it to count as active (0 = mapping.DefaultProducersWindow). Only used
+	// for a snapshot taken with ConnectParams.Producers.
+	ProducersWindow time.Duration
 }
 
 // Result is the fully-built, self-validated pipeline output. Warnings collects
@@ -160,6 +168,7 @@ func Build(snap snapshot.ClusterSnapshot, opts BuildOptions) (*Result, error) {
 		MaxRecordsPerPartition: opts.MaxRecordsPerPartition,
 		Clamp:                  opts.Clamp,
 		PinnedTopics:           opts.PinnedTopics,
+		ProducersWindow:        opts.ProducersWindow,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("mapping: %w", err)

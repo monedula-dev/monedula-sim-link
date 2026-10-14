@@ -45,6 +45,8 @@ type config struct {
 	password               string
 	timeout                time.Duration
 	clamp                  bool
+	producers              bool
+	producersWindow        time.Duration
 	maxRecordsPerPartition int
 	baseURL                string
 	dryRun                 bool
@@ -72,6 +74,8 @@ func registerConnectFlags(fs *flag.FlagSet) *config {
 // downstream of the snapshot).
 func registerMappingFlags(fs *flag.FlagSet, c *config) {
 	fs.BoolVar(&c.clamp, "clamp", false, "when brokers, partitions or the --topics list exceed simulator caps, trim deterministically instead of failing (a wider topic selection and the consumer-group cap never fail: the most eventful are kept)")
+	fs.BoolVar(&c.producers, "producers", false, "also read the active producers (DescribeProducers, which needs READ on each selected topic and Kafka 2.8+) and add up to 4 of them to the link; a refused or unsupported read is a warning, never a failure")
+	fs.DurationVar(&c.producersWindow, "producers-window", mapping.DefaultProducersWindow, "with --producers: a producer is active when it wrote to a partition within this long before the snapshot")
 	fs.IntVar(&c.maxRecordsPerPartition, "max-records-per-partition", mapping.DefaultMaxRecordsPerPartition, "cap on synthetic trailing records produced per partition")
 	fs.StringVar(&c.baseURL, "base-url", simurl.DefaultBaseURL, "playground base URL")
 	fs.BoolVar(&c.dryRun, "dry-run", false, "also print the decoded action list, name mappings and size param")
@@ -88,7 +92,8 @@ Usage:
 Commands:
   connect  Snapshot a real cluster (STRICTLY READ-ONLY: ApiVersions, Metadata,
            ListOffsets, ListGroups, DescribeGroups, OffsetFetch and
-           DescribeConfigs requests only) and print a playground URL.
+           DescribeConfigs requests only, plus DescribeProducers with
+           --producers) and print a playground URL.
   demo     Feed a built-in cluster fixture through the same mapping (no
            cluster needed).
   mcp      Serve the Model Context Protocol over stdio, exposing the playground
@@ -157,6 +162,9 @@ func runConnect(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "connect: --brokers is required")
 		return 2
 	}
+	if !checkProducerFlags(fs, c, "connect", stderr) {
+		return 2
+	}
 
 	snap, warnings, err := emit.Snapshot(context.Background(), connectParams(c))
 	for _, w := range warnings {
@@ -186,7 +194,25 @@ func connectParams(c *config) emit.ConnectParams {
 		Username:      c.username,
 		Password:      c.password,
 		Timeout:       c.timeout,
+		Producers:     c.producers,
 	}
+}
+
+// checkProducerFlags validates --producers-window and notes a window given
+// without --producers, which would otherwise be ignored without a word.
+func checkProducerFlags(fs *flag.FlagSet, c *config, cmd string, stderr io.Writer) bool {
+	if c.producersWindow <= 0 {
+		fmt.Fprintf(stderr, "%s: --producers-window must be positive, got %s\n", cmd, c.producersWindow)
+		return false
+	}
+	if !c.producers {
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "producers-window" {
+				fmt.Fprintln(stderr, "warning: --producers-window has no effect without --producers")
+			}
+		})
+	}
+	return true
 }
 
 // emitURL runs the shared mapping → validation → URL tail (package emit) and
@@ -199,6 +225,7 @@ func emitURL(snap snapshot.ClusterSnapshot, c *config, stdout, stderr io.Writer)
 		Clamp:                  c.clamp,
 		PinnedTopics:           strings.Split(c.topics, ","),
 		Force:                  c.force,
+		ProducersWindow:        c.producersWindow,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)
@@ -306,6 +333,26 @@ func demoFixture() snapshot.ClusterSnapshot {
 	}
 }
 
+// withDemoProducers adds what DescribeProducers would have reported on the demo
+// cluster, for demo --producers: pid 1001 wrote to all three orders partitions and
+// to payments a couple of minutes ago (the top producer, pinned to orders),
+// pid 1002 wrote to payments half a minute ago from inside an open transaction
+// (shown as an idempotent producer, with a warning), and pid 1003 wrote to
+// orders three hours ago (outside the default 15m window, so it is left out).
+func withDemoProducers(snap snapshot.ClusterSnapshot, now time.Time) snapshot.ClusterSnapshot {
+	ago := func(d time.Duration) int64 { return now.Add(-d).UnixMilli() }
+	write := func(id int64, d time.Duration, txnStart int64) snapshot.ProducerWrite {
+		return snapshot.ProducerWrite{ProducerID: id, LastTimestamp: ago(d), CurrentTxnStartOffset: txnStart}
+	}
+	orders, payments := snap.Topics[0].Partitions, snap.Topics[1].Partitions
+	orders[0].Producers = []snapshot.ProducerWrite{write(1001, 2*time.Minute, -1), write(1003, 3*time.Hour, -1)}
+	orders[1].Producers = []snapshot.ProducerWrite{write(1001, 3*time.Minute, -1)}
+	orders[2].Producers = []snapshot.ProducerWrite{write(1001, 4*time.Minute, -1)}
+	payments[0].Producers = []snapshot.ProducerWrite{write(1001, 2*time.Minute, -1), write(1002, 30*time.Second, 2)}
+	snap.Producers = &snapshot.ProducersRead{At: now}
+	return snap
+}
+
 func runDemo(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("demo", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -314,5 +361,12 @@ func runDemo(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	return emitURL(demoFixture(), c, stdout, stderr)
+	if !checkProducerFlags(fs, c, "demo", stderr) {
+		return 2
+	}
+	snap := demoFixture()
+	if c.producers {
+		snap = withDemoProducers(snap, time.Now())
+	}
+	return emitURL(snap, c, stdout, stderr)
 }

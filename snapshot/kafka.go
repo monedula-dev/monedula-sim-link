@@ -4,12 +4,15 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/kmsg"
 	"github.com/twmb/franz-go/pkg/sasl/plain"
@@ -20,11 +23,16 @@ import (
 // STRICTLY READ-ONLY by construction: the only Kafka requests it builds are
 // Metadata (with AllowAutoTopicCreation left false, so listing a topic can
 // never create it), ListOffsets, ListGroups, DescribeGroups, OffsetFetch and
-// DescribeConfigs; franz-go itself adds the ApiVersions handshake. All six are
-// read requests — none of them is a JoinGroup/SyncGroup/Heartbeat (no group is
+// DescribeConfigs, plus DescribeProducers when, and only when, the caller opts
+// in with FetchOptions.Producers; franz-go itself adds the ApiVersions
+// handshake and, to route DescribeProducers to each partition leader, its own
+// Metadata lookups (also with AllowAutoTopicCreation false). Every one is a
+// read request - none of them is a JoinGroup/SyncGroup/Heartbeat (no group is
 // ever joined), an OffsetCommit (no offset is ever committed), or an
-// AlterConfigs/IncrementalAlterConfigs (no config is ever changed). No records
-// are produced and no topic is ever created, altered or deleted.
+// AlterConfigs/IncrementalAlterConfigs (no config is ever changed).
+// DescribeProducers needs READ on each topic, which is why it is off by
+// default: a default snapshot never sends it. No records are produced and no
+// topic is ever created, altered or deleted.
 
 // TLSConfig enables TLS on the bootstrap connections. All fields optional:
 // zero value = system trust roots, no client certificate.
@@ -128,12 +136,31 @@ func buildSASL(cfg *SASLConfig) (kgo.Opt, error) {
 	}
 }
 
-// Fetch takes the point-in-time snapshot: one Metadata request for brokers +
-// topics + partition placement, then the selection filter, then ListOffsets
-// (earliest and latest) for every selected partition. Returns the snapshot,
-// non-fatal warnings (partitions whose offsets could not be listed, topics
-// with metadata errors), and an error when the selection matches nothing.
+// FetchOptions selects the opt-in reads of a snapshot, on top of the default
+// ones Fetch always makes.
+type FetchOptions struct {
+	// Producers also sends DescribeProducers (KIP-664) for the partitions of the
+	// selected topics, to learn which producer ids wrote to them recently. It
+	// needs READ on each topic and Kafka 2.8 or newer, so a missing permission
+	// or an older cluster is reported in ClusterSnapshot.Producers, never as an
+	// error.
+	Producers bool
+}
+
+// Fetch takes the point-in-time snapshot with the default reads only: one
+// Metadata request for brokers + topics + partition placement, then the
+// selection filter, then ListOffsets (earliest and latest) for every selected
+// partition, DescribeConfigs and the consumer-group reads. Returns the
+// snapshot, non-fatal warnings (partitions whose offsets could not be listed,
+// topics with metadata errors), and an error when the selection matches
+// nothing.
 func (c *Client) Fetch(ctx context.Context, sel Selection) (ClusterSnapshot, []string, error) {
+	return c.FetchWith(ctx, sel, FetchOptions{})
+}
+
+// FetchWith is Fetch plus the opt-in reads in opts. With the zero FetchOptions
+// it sends exactly the requests Fetch does.
+func (c *Client) FetchWith(ctx context.Context, sel Selection, opts FetchOptions) (ClusterSnapshot, []string, error) {
 	var warnings []string
 	snap := ClusterSnapshot{}
 
@@ -228,6 +255,9 @@ func (c *Client) Fetch(ctx context.Context, sel Selection) (ClusterSnapshot, []s
 	}
 	snap.Groups = groups
 	warnings = append(warnings, groupWarnings...)
+	if opts.Producers {
+		snap.Producers = c.fetchProducers(ctx, snap.Topics)
+	}
 
 	// Mark referenced-but-unregistered brokers offline for the mapping layer:
 	// synthesize entries so the snapshot is self-contained.
@@ -502,4 +532,132 @@ func (c *Client) fetchGroups(ctx context.Context, topics []Topic) ([]Group, []st
 	}
 	sort.Slice(groups, func(i, j int) bool { return groups[i].ID < groups[j].ID })
 	return groups, warnings, nil
+}
+
+// maxListedPartitions bounds how many partitions one error entry spells out.
+const maxListedPartitions = 5
+
+// producersReadTimeout bounds the optional DescribeProducers read on its own, so
+// a partition that keeps answering NOT_LEADER_OR_FOLLOWER (franz-go retries
+// that) cannot hold the whole snapshot until its overall timeout. A var so a test
+// can shorten it.
+var producersReadTimeout = 5 * time.Second
+
+// fetchProducers sends one DescribeProducers request (KIP-664, read-only; it
+// needs READ on each topic) covering every given partition and fills each
+// Partition.Producers in place. franz-go splits the request by partition
+// leader. Nothing here fails the snapshot: a missing permission, an old
+// cluster, a partition without a leader or a request that did not complete is
+// recorded in the returned ProducersRead, and the producers of the partitions
+// that did answer are kept.
+func (c *Client) fetchProducers(ctx context.Context, topics []Topic) *ProducersRead {
+	out := &ProducersRead{At: time.Now()}
+	req := kmsg.NewPtrDescribeProducersRequest()
+	partitions := make(map[string]map[int32]*Partition, len(topics))
+	for ti := range topics {
+		t := &topics[ti]
+		if len(t.Partitions) == 0 {
+			continue
+		}
+		rt := kmsg.NewDescribeProducersRequestTopic()
+		rt.Topic = t.Name
+		partitions[t.Name] = make(map[int32]*Partition, len(t.Partitions))
+		for pi := range t.Partitions {
+			p := &t.Partitions[pi]
+			rt.Partitions = append(rt.Partitions, int32(p.ID))
+			partitions[t.Name][int32(p.ID)] = p
+		}
+		req.Topics = append(req.Topics, rt)
+	}
+	if len(req.Topics) == 0 {
+		return out
+	}
+	ctx, cancel := context.WithTimeout(ctx, producersReadTimeout)
+	defer cancel()
+
+	denied := map[string]bool{}
+	failedAt := map[string][]string{} // error text -> "topic/partition" entries
+	requestErrs := map[string]bool{}
+	for _, shard := range c.kc.RequestSharded(ctx, req) {
+		if shard.Err != nil {
+			switch msg := shard.Err.Error(); {
+			case strings.Contains(msg, "too old") || errors.Is(shard.Err, kerr.UnsupportedVersion):
+				out.Unsupported = true
+			case ctx.Err() != nil:
+				requestErrs["did not finish in time"] = true
+			default:
+				requestErrs[msg] = true
+			}
+			continue
+		}
+		resp, ok := shard.Resp.(*kmsg.DescribeProducersResponse)
+		if !ok {
+			requestErrs[fmt.Sprintf("unexpected response type %T", shard.Resp)] = true
+			continue
+		}
+		for _, rt := range resp.Topics {
+			for _, rp := range rt.Partitions {
+				switch rp.ErrorCode {
+				case 0:
+					p := partitions[rt.Topic][rp.Partition]
+					if p == nil {
+						continue
+					}
+					for _, ap := range rp.ActiveProducers {
+						p.Producers = append(p.Producers, ProducerWrite{
+							ProducerID:            ap.ProducerID,
+							LastTimestamp:         ap.LastTimestamp,
+							CurrentTxnStartOffset: ap.CurrentTxnStartOffset,
+						})
+					}
+				case kerr.TopicAuthorizationFailed.Code:
+					denied[rt.Topic] = true
+				case kerr.ClusterAuthorizationFailed.Code:
+					out.ClusterDenied = true
+				case kerr.UnsupportedVersion.Code:
+					out.Unsupported = true
+				default:
+					text := "error code " + strconv.Itoa(int(rp.ErrorCode))
+					if ke := kerr.TypedErrorForCode(rp.ErrorCode); ke != nil {
+						text = ke.Message + " (" + strconv.Itoa(int(rp.ErrorCode)) + ")" // the protocol name, e.g. NOT_LEADER_FOR_PARTITION (6)
+					}
+					failedAt[text] = append(failedAt[text], rt.Topic+"/"+strconv.Itoa(int(rp.Partition)))
+				}
+			}
+		}
+	}
+
+	for name := range denied {
+		out.DeniedTopics = append(out.DeniedTopics, name)
+	}
+	sort.Strings(out.DeniedTopics)
+	texts := make([]string, 0, len(failedAt))
+	for text := range failedAt {
+		texts = append(texts, text)
+	}
+	sort.Strings(texts)
+	for _, text := range texts {
+		at := failedAt[text]
+		sort.Strings(at)
+		more := ""
+		if len(at) > maxListedPartitions {
+			more = fmt.Sprintf(" and %d more", len(at)-maxListedPartitions)
+			at = at[:maxListedPartitions]
+		}
+		out.Errors = append(out.Errors, fmt.Sprintf("%s on %s%s", text, strings.Join(at, ", "), more))
+	}
+	reqErrs := make([]string, 0, len(requestErrs))
+	for msg := range requestErrs {
+		reqErrs = append(reqErrs, msg)
+	}
+	sort.Strings(reqErrs)
+	out.Errors = append(out.Errors, reqErrs...)
+
+	for ti := range topics {
+		for pi := range topics[ti].Partitions {
+			ps := topics[ti].Partitions[pi].Producers
+			sort.Slice(ps, func(i, j int) bool { return ps[i].ProducerID < ps[j].ProducerID })
+		}
+	}
+	return out
 }

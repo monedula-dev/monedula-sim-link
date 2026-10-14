@@ -29,11 +29,11 @@ Snapshot two topics of a local cluster and print the playground link that shows 
 monedula-sim-link connect --brokers localhost:9092 --topics orders,payments
 ```
 
-Add `--dry-run` to see the cluster shape, the real-to-simulator name tables and the decoded actions before the URL. [Connect to a secured cluster](https://monedula.dev/flock/docs/sim-link/how-to/connect-to-a-secured-cluster/) covers TLS, mTLS and SASL (PLAIN and SCRAM).
+Add `--dry-run` to see the cluster shape, the real-to-simulator name tables and the decoded actions before the URL. Add `--producers` to also show who writes: it reads the producers that wrote to the selected topics in the last 15 minutes (`--producers-window` changes that), and adds up to four of them to the link, named `pid-<producerId>`. It is off by default because it needs READ on each topic and Kafka 2.8 or newer; without it no producer is read. [Connect to a secured cluster](https://monedula.dev/flock/docs/sim-link/how-to/connect-to-a-secured-cluster/) covers TLS, mTLS and SASL (PLAIN and SCRAM).
 
 ## Read-only
 
-`connect` sends only read requests: ApiVersions, Metadata, ListOffsets, ListGroups, DescribeGroups, OffsetFetch and DescribeConfigs. Metadata goes out with `AllowAutoTopicCreation=false`, so looking up a topic never creates it. It joins no consumer group and commits no offset. The whole client is in [`snapshot/kafka.go`](snapshot/kafka.go), so the guarantee can be audited in one file.
+`connect` sends only read requests: ApiVersions, Metadata, ListOffsets, ListGroups, DescribeGroups, OffsetFetch and DescribeConfigs, and DescribeProducers only when you pass `--producers`. Metadata goes out with `AllowAutoTopicCreation=false`, so looking up a topic never creates it. It joins no consumer group and commits no offset. The whole client is in [`snapshot/kafka.go`](snapshot/kafka.go), so the guarantee can be audited in one file.
 
 ## MCP server
 

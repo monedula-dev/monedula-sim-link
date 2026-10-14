@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/monedula-dev/monedula-sim-link/actionlog"
 	"github.com/monedula-dev/monedula-sim-link/snapshot"
@@ -30,6 +31,11 @@ type Options struct {
 	// PinnedTopics are the topic names the caller listed exactly (--topics).
 	// An over-cap selection keeps them before ranking the rest.
 	PinnedTopics []string
+	// ProducersWindow is how long before the snapshot a producer's last write may
+	// be for the producer to count as active (--producers-window). Zero uses
+	// DefaultProducersWindow. Only used when the snapshot carries a producers
+	// read (snapshot.ClusterSnapshot.Producers).
+	ProducersWindow time.Duration
 }
 
 // DefaultMaxRecordsPerPartition is the --max-records-per-partition default.
@@ -490,6 +496,23 @@ func Map(snap snapshot.ClusterSnapshot, opts Options) (*Result, error) {
 		memberNames := assignUniqueNamesIndexed(memberReals, simMemberID, maxSimIDLen)
 		for _, sim := range memberNames {
 			emit(actionlog.AddConsumer{GroupID: simGroup, MemberID: sim})
+		}
+	}
+
+	// 7. Producers (opt-in, --producers): the producers that wrote to the rendered
+	// topics lately stay in the link as free-play producers, pinned to the topic
+	// they wrote to most. They go last, after the keyed-record replay and its
+	// transient producers are gone, so the replay is untouched and at most 4
+	// producers are ever alive (the engine's cap). The playground's auto-loop,
+	// on by default in free play, then keeps them producing. Producers listed by
+	// DescribeProducers are idempotent or transactional, and the engine's
+	// add_producer default is already acks=all with idempotence, so the config
+	// change only states it; a transactional producer cannot be expressed
+	// (planProducers warns).
+	if snap.Producers != nil {
+		for _, pl := range planProducers(snap.Producers, mapped, opts.ProducersWindow, warnf) {
+			emit(actionlog.AddProducer{ProducerID: pl.simID, Topic: pl.topic})
+			emit(actionlog.ConfigChange{Path: "producers." + pl.simID + ".config.enableIdempotence", Value: "true"})
 		}
 	}
 

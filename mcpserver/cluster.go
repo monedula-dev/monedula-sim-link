@@ -20,7 +20,7 @@ import (
 // mapping caps. It is the live-cluster counterpart to build_playground_url's
 // declarative shape.
 type ClusterToURLInput struct {
-	Brokers     []string `json:"brokers" jsonschema:"Kafka bootstrap brokers as host:port; at least one, required. The connection is STRICTLY READ-ONLY (ApiVersions, Metadata, ListOffsets, ListGroups, DescribeGroups, OffsetFetch and DescribeConfigs requests only - no produce, no topic/config mutation, no consumer group joined)"`
+	Brokers     []string `json:"brokers" jsonschema:"Kafka bootstrap brokers as host:port; at least one, required. The connection is STRICTLY READ-ONLY (ApiVersions, Metadata, ListOffsets, ListGroups, DescribeGroups, OffsetFetch and DescribeConfigs requests only, plus DescribeProducers when producers is true - no produce, no topic/config mutation, no consumer group joined)"`
 	Topics      []string `json:"topics,omitempty" jsonschema:"exact topic names to include. Fails if any is missing. Always kept when the selection is over the 6-extra-topic cap; the free slots go to the most eventful other topics. Also the only way to include internal topics (flagged internal by the broker, or with a leading '_'). Omit (with no topicsRegex) to include every non-internal topic"`
 	TopicsRegex string   `json:"topicsRegex,omitempty" jsonschema:"additionally include non-internal topics whose name matches this Go (RE2) regexp"`
 
@@ -36,6 +36,7 @@ type ClusterToURLInput struct {
 	TimeoutSeconds         int  `json:"timeoutSeconds,omitempty" jsonschema:"overall snapshot timeout in seconds (default 15)"`
 	MaxRecordsPerPartition int  `json:"maxRecordsPerPartition,omitempty" jsonschema:"cap on synthetic trailing records produced per partition to represent data volume (default 8)"`
 	Clamp                  bool `json:"clamp,omitempty" jsonschema:"when the cluster exceeds the simulator's free-play caps (10 brokers, 24 partitions per topic) or the topics list names more than 6 topics besides orders, trim deterministically with warnings instead of failing. A wider selection never fails: the 6 most eventful extra topics (unhealthy partitions, then consumer lag, then readers, then retained records) and the 4 consumer groups with the most lag are kept, with a warning"`
+	Producers              bool `json:"producers,omitempty" jsonschema:"also read the active producers with DescribeProducers (KIP-664, Kafka 2.8+) and add up to 4 of them to the link: the producers that wrote to a rendered topic in the last 15 minutes, ranked by how many partitions they wrote to, each pinned to the topic it wrote to most and shown as an idempotent producer named pid-<producerId>. Off by default (default false) because the request needs READ on every selected topic; with it off, no DescribeProducers request is sent. A refused or unsupported read is a warning, never a failure"`
 }
 
 // NameMapping is one real-name → simulator-name entry in the echo tables.
@@ -82,6 +83,7 @@ func clusterToURLHandler(base string) mcp.ToolHandlerFor[ClusterToURLInput, Clus
 			Username:      in.Username,
 			Password:      in.Password,
 			Timeout:       time.Duration(in.TimeoutSeconds) * time.Second,
+			Producers:     in.Producers,
 		})
 		if err != nil {
 			return nil, zero, err

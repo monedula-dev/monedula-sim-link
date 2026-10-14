@@ -25,8 +25,9 @@ omitted). Spec references: `docs/playground-url-api.md` in the website repo
 3. **Size param** — brokers/partitions/RF/config per the shape rules below.
 4. **Action log** - in fixed order: remove the free-play template producer and
    template consumer group → reassignments → kills → replica slowdowns →
-   per-topic produce bursts → consumer groups. Actions are spaced 250 ms apart
-   on the simulation timeline starting at t=500 ms.
+   per-topic produce bursts → consumer groups → producers (only with
+   `--producers`). Actions are spaced 250 ms apart on the simulation timeline
+   starting at t=500 ms.
 
 ## Cluster shape: the `size` param
 
@@ -199,7 +200,8 @@ apart, ascending synthetic timestamps), and `RP:kpN` removes the producer 2 s
 after the last record (past the produce flush delay). At most one synthetic
 producer is alive at a time — free play caps producers at 4 — and the template
 producer `p1` was removed at t=500 so the playground's auto-produce loop adds
-nothing on top.
+nothing on top. (Without `--producers` that stays true for the whole session.
+With it, the auto-loop has the producers it adds to run, see *Producers* below.)
 
 A partition whose rendered replicas are all dead gets **no** produces (they
 could never acknowledge); a warning explains the skip.
@@ -262,6 +264,65 @@ forward through the topic's synthetic trailing records (see *Data volume*
 above) — the visual effect is "this group is behind", not a byte-accurate lag
 count.
 
+## Producers: `--producers`, `AP` + idempotence
+
+Off by default. Without `--producers` the tool sends no `DescribeProducers`
+request and the link has no producers, exactly as before. The flag makes
+`fetchProducers` (`snapshot/kafka.go`) send one `DescribeProducers` request
+(KIP-664, Kafka 2.8 or newer) for every partition of the selected topics, split
+by partition leader. It is a read, but it needs **READ on each topic**, which is
+why it is opt-in.
+
+The reply lists, per partition, the producer ids that wrote to it (idempotent
+and transactional alike) with the time of each one's last write and the first
+offset of its open transaction, if any. The mapping then:
+
+1. **Counts a producer as active** on a partition when its last write is within
+   `--producers-window` (default 15m) before the snapshot time, taken on the
+   machine running the tool, so a large clock difference to the brokers shifts the
+   window. A write with no timestamp is not counted. Only the topics and
+   partitions the link renders count (after the topic and partition caps), because
+   a producer needs a topic to be pinned to.
+2. **Ranks** the active producers by how many partitions they wrote to, then by
+   the most recent write, then by producer id, and keeps the top 4 (free play
+   renders at most `MAX_FREE_PLAY_PRODUCERS` = 4, and the engine ignores an
+   `add_producer` past 4 live ones). Over 4, one warning names the ones kept and
+   dropped, like the group cap.
+3. **Names** each `pid-<producerId>` (a Kafka producer id is a non-negative 64-bit
+   integer, so the name is at most 23 characters, inside the 40 the other
+   generated ids stay under, and clear of the template `p1` and the transient
+   `kpN`).
+4. **Pins** it to the rendered topic it wrote to on the most active partitions; a
+   tie goes to the earlier topic in the usual order (`orders`, then
+   alphabetical).
+5. **Emits**, after everything else (the keyed replay and its transient
+   producers are gone, so the replay is untouched, and the consumer groups are in
+   place): `AP:pid-<id>:<topic>` and
+   `C:producers.pid-<id>.config.enableIdempotence:true`. The added producers are
+   not removed again, so the playground's auto-loop, which is on by default in
+   free play, produces from them: the link shows who is writing. Their records
+   come on top of the synthetic ones, so offsets keep growing.
+
+**Idempotent, not transactional.** Every producer `DescribeProducers` lists is
+idempotent or transactional, so each is configured idempotent (the playground's
+default for a new producer is already `acks=all` with idempotence, the config
+change states it). A producer with an open transaction (`CurrentTxnStartOffset`
+of 0 or more on some partition) cannot be shown as transactional: the URL grammar
+has no `transactional.id` (it is not on the `config_change` whitelist, and the
+size slug's producer list has no such field), and `begin_transaction` does
+nothing for a producer without one, so a `BT` action would be dropped by the
+engine without a trace. It is added as an idempotent producer and one warning
+names it and the partitions. A transactional producer between transactions looks
+like an idempotent one, so it is not told apart.
+
+**When the read does not work** the link is still built, without the producers
+that could not be read, and a warning says why: `UNSUPPORTED_VERSION` or a broker
+too old to know the API (Kafka before 2.8), `CLUSTER_AUTHORIZATION_FAILED`,
+`TOPIC_AUTHORIZATION_FAILED` (naming the topics; the producers of the topics that
+were readable are still used), another error code on some partitions, or a read
+that did not finish in 5 seconds. With nothing wrong but no producer in the
+window, a warning says so.
+
 ## Self-validation
 
 `Map` verifies its own output round-trips the codec
@@ -292,11 +353,18 @@ raw-DEFLATE layout this tool emits and its own lz-string layout (see
   broker racks are captured in the snapshot but not encoded. (The simulator's
   rack model is a size-param extension the mapping does not emit.)
 - **Per-client `client.rack`** (v2.0+, KIP-1163 draft). The TypeScript codec
-  now encodes an optional rack on each initial producer / consumer group
-  (`freePlayTopologies.ts`), but neither `Map` nor the MCP declarative shape
-  (`mcpserver.ClusterShape`) models initial producers or consumer groups at
-  all - there is nothing in this tool to carry a rack on, so this stays
-  unrepresented until that surface exists.
+  encodes an optional rack on each initial producer / consumer group in the
+  size slug (`freePlayTopologies.ts`, tail indices 1 and 2). Neither `Map` nor
+  the MCP declarative shape (`mcpserver.ClusterShape`) writes those lists: the
+  producers (`--producers`) and groups it adds are action-log entries
+  (`add_producer`, `add_group`), and an `add_producer` has no rack field, so
+  this stays unrepresented.
+- **Producer settings and transactions.** `--producers` shows who writes, not
+  how: a producer's `acks`, linger, batching and the like are not read (the
+  broker does not report them), so every added producer has the playground's
+  defaults plus idempotence, and a transactional producer is shown as an
+  idempotent one (see *Producers*). Only up to 4 are shown, ranked by how many
+  partitions they wrote to.
 - **Remote-storage tiering config.** `remote.storage.enable` and
   `local.retention.ms` are never fetched, even though `min.insync.replicas` /
   `cleanup.policy` / `retention.ms` / `retention.bytes` now are.

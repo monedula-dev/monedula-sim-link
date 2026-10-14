@@ -58,8 +58,8 @@ func readState(t *testing.T, adm *kadm.Client) clusterState {
 	return s
 }
 
-// TestReadOnly takes full snapshots and a snapshot of a topic that does not
-// exist, on brokers with auto.create.topics.enable=true, and checks nothing
+// TestReadOnly takes full snapshots (with and without the producers read) and a
+// snapshot of a topic that does not exist, on brokers with auto.create.topics.enable=true, and checks nothing
 // moved: no topic created, no offset committed, no member joined or left.
 func TestReadOnly(t *testing.T) {
 	adm, err := newAdmin()
@@ -70,6 +70,7 @@ func TestReadOnly(t *testing.T) {
 	before := readState(t, adm)
 
 	takeSnapshot(t)
+	takeProducersSnapshot(t) // the opt-in DescribeProducers read is read-only too
 	buildURL(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
