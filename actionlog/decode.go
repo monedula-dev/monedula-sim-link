@@ -28,6 +28,8 @@ func decodeAction(kind, payload string) (Action, error) {
 		return decodeProduceRecord(payload)
 	case "AG":
 		return decodeAddGroup(payload)
+	case "RG":
+		return RemoveGroup{GroupID: payload}, nil
 	case "ASG":
 		return decodeAddShareGroup(payload)
 	case "C":

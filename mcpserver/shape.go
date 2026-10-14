@@ -45,8 +45,8 @@ type TopicShape struct {
 	Name              string `json:"name" jsonschema:"topic name: letters, digits, '.', '_', '-', at most 40 chars. Note: a name containing '.' cannot be referenced by produce/reassign actions (the action grammar reserves '.'), so prefer '_' or '-'"`
 	Partitions        int    `json:"partitions" jsonschema:"partition count (>= 1)"`
 	ReplicationFactor int    `json:"replicationFactor" jsonschema:"replication factor (>= 1, at most the broker count of the hosting zone set)"`
-	MinInSyncReplicas *int   `json:"minInSyncReplicas,omitempty" jsonschema:"optional min.insync.replicas (1..replicationFactor)"`
-	CleanupPolicy     string `json:"cleanupPolicy,omitempty" jsonschema:"optional cleanup policy: delete, compact, or compact,delete"`
+	MinInSyncReplicas *int   `json:"minInSyncReplicas,omitempty" jsonschema:"optional min.insync.replicas (1..replicationFactor). Unset means the simulator's default: 1 for an extra topic (Kafka's own default), max(1, replicationFactor-1) for the primary topic 'orders'"`
+	CleanupPolicy     string `json:"cleanupPolicy,omitempty" jsonschema:"optional cleanup policy: delete, compact, or compact,delete. Unset means delete"`
 	// DisklessEnable is KIP-1163 draft `diskless.enable` (v2.0+).
 	// On the primary ("orders") topic it sets the free-play session's primary
 	// diskless flag (size tail index 17); on any other topic it appends the
@@ -118,9 +118,37 @@ func rfMax(t topology, brokers []int) int {
 	}
 }
 
-// maxPartitions is §12's partition clamp. For stretched-3 the doc bounds the
-// busiest broker to 3 partition strips at the chosen RF; the conservative
-// closed form is floor(3*brokers/rf).
+// The stretched-3 partition rule, ported from the simulator's
+// maxFreePlayPartitions (src/sim/freePlayTopologies.ts). Its DC bands do not
+// grow, so the count is bounded by how many partition strips the busiest
+// broker holds under the engine's contiguous round-robin placement, not by a
+// closed form.
+const (
+	// maxBandPartitions is MAX_FREE_PLAY_PARTITIONS: the absolute partition cap
+	// of every multi-DC topology, and the upper end of the stretched-3 search.
+	maxBandPartitions = 6
+	// partitionStripsPerBroker is PARTITION_STRIPS_PER_BROKER: the strips a
+	// non-growing band broker can show without clipping.
+	partitionStripsPerBroker = 3
+)
+
+// busiestBrokerLoad mirrors busiestBrokerLoad in freePlayTopologies.ts: partition
+// i's replicas are brokers i..i+rf-1 (mod brokers), so each broker sits in rf of
+// every `brokers` consecutive partitions.
+func busiestBrokerLoad(partitions, rf, brokers int) int {
+	if brokers <= 0 {
+		return partitions
+	}
+	return rf*(partitions/brokers) + min(rf, partitions%brokers)
+}
+
+// maxPartitions is §12's partition clamp. For stretched-3 it mirrors the
+// simulator's maxFreePlayPartitions exactly: the largest count in 1..6 that
+// keeps the busiest broker within 3 partition strips at the chosen RF
+// (busiestBrokerLoad is monotonic in the count, so the first count that
+// overflows ends the search). The result never exceeds 6; the closed form
+// 3*brokers/rf this replaced allowed up to 9 on 9 brokers at RF 3, a count the
+// simulator clamps back to 6.
 func maxPartitions(t topology, brokers []int, rf int) int {
 	if t.partitionCap > 0 {
 		return t.partitionCap
@@ -129,7 +157,15 @@ func maxPartitions(t topology, brokers []int, rf int) int {
 	for _, b := range brokers {
 		total += b
 	}
-	return 3 * total / rf
+	rf = max(1, rf)
+	best := 1
+	for p := 1; p <= maxBandPartitions; p++ {
+		if busiestBrokerLoad(p, rf, total) > partitionStripsPerBroker {
+			break
+		}
+		best = p
+	}
+	return best
 }
 
 var topicNameRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,40}$`)
@@ -413,17 +449,27 @@ func validateDisklessTiming(dt *DisklessTimingShape, anyDiskless bool) error {
 // four retention/tier fields left empty, plus - KIP-1163 draft, v2.0+ -
 // a 10th `~1` field appended when the topic is diskless (a
 // classic topic omits it, so every pre-diskless chunk stays byte-identical).
+//
+// min.ISR and cleanup are always written, as the simulator's own encoder does.
+// An unset min.ISR is Kafka's default 1 (what the cluster mapping writes for an
+// unread value too) and an unset cleanup is delete: the simulator's decoder drops
+// a whole extra topic whose min.ISR field is not a number, so leaving the field
+// empty for "unset" silently lost the topic from the link.
 func topicChunk(t TopicShape) string {
-	minISR := ""
+	minISR := "1"
 	if t.MinInSyncReplicas != nil {
 		minISR = strconv.Itoa(*t.MinInSyncReplicas)
+	}
+	cleanup := cleanupCodes[t.CleanupPolicy]
+	if cleanup == "" {
+		cleanup = cleanupCodes["delete"]
 	}
 	chunk := strings.Join([]string{
 		escapeSizeName(t.Name),
 		strconv.Itoa(t.Partitions),
 		strconv.Itoa(t.ReplicationFactor),
 		minISR,
-		cleanupCodes[t.CleanupPolicy], // "" when unset
+		cleanup,
 		"", "", "", "",
 	}, "~")
 	if t.DisklessEnable {
@@ -432,15 +478,17 @@ func topicChunk(t TopicShape) string {
 	return chunk
 }
 
-// primaryConfigChunk renders tail index 10 (5 "~"-joined fields) when the
-// primary topic overrides min.ISR or cleanup; "" when neither is set.
+// primaryConfigChunk renders tail index 10 (5 "~"-joined fields) in the
+// simulator's canonical form, through the helper the cluster mapping uses
+// (mapping.EncodePrimaryConfigTail): a field equal to the simulator's default is
+// left out, because clampPrimaryTopic drops it on decode. That is cleanup
+// `delete` and a min.ISR equal to max(1, RF-1) for the primary's RF; "" when
+// nothing is left, in which case the caller leaves tail index 10 out. The shape
+// carries no retention.
 func primaryConfigChunk(t TopicShape) string {
-	if t.MinInSyncReplicas == nil && t.CleanupPolicy == "" {
-		return ""
-	}
-	minISR := ""
+	minISR := 0
 	if t.MinInSyncReplicas != nil {
-		minISR = strconv.Itoa(*t.MinInSyncReplicas)
+		minISR = *t.MinInSyncReplicas
 	}
-	return strings.Join([]string{minISR, cleanupCodes[t.CleanupPolicy], "", "", ""}, "~")
+	return mapping.EncodePrimaryConfigTail(t.ReplicationFactor, minISR, t.CleanupPolicy, nil, nil)
 }

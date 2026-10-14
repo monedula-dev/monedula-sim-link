@@ -310,6 +310,25 @@ func (a AddGroup) payload() (string, error) {
 	return out + ":" + code + ":" + settings, nil
 }
 
+// --- remove_group (RG) ------------------------------------------------------
+
+// RemoveGroup removes a consumer group with all its members (RG:<groupId>).
+// Free play starts with a default consumer group "c1" (one member, also "c1");
+// a generator removes it so a fake consumer does not sit beside the real
+// groups it adds.
+type RemoveGroup struct {
+	GroupID string
+}
+
+func (RemoveGroup) isAction()    {}
+func (RemoveGroup) kind() string { return "RG" }
+func (a RemoveGroup) payload() (string, error) {
+	if err := validateRawField("group id", a.GroupID); err != nil {
+		return "", err
+	}
+	return a.GroupID, nil
+}
+
 // GroupSettings is the add_group settings field (§2.4 of the URL API spec):
 // the configuration a group carries, which the playground writes when
 // `kafka-consumer-groups --reset-offsets` rebuilds a configured group and when

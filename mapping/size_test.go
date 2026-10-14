@@ -1,6 +1,10 @@
 package mapping
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 func i64p(v int64) *int64 { return &v }
 
@@ -125,6 +129,82 @@ func TestBuildSize(t *testing.T) {
 			diskless: disklessTail{uploadMs: intp(900)},
 			want:     "5x4x3xwal~4~3~1~d~~~~~1xxxxxxxxxxxxxxxxx.900",
 		},
+		// Canonical tail index 10 (SIZE lines dated 2026-10-14 in ts-fixtures.txt):
+		// a field equal to the simulator's default is left out, and a primary with
+		// nothing left to say has no tail 10 at all.
+		{
+			name:    "primary at every default has no tail",
+			brokers: 5,
+			primary: &topicShape{simName: "orders", partitions: 4, rf: 3, minISR: 2, cleanupPolicy: "delete"},
+			want:    "5x4x3",
+		},
+		{
+			name:    "primary min.ISR 1 at RF 1 is the default",
+			brokers: 3,
+			primary: &topicShape{simName: "orders", partitions: 1, rf: 1, minISR: 1, cleanupPolicy: "delete"},
+			want:    "3x1x1",
+		},
+		{
+			name:    "primary min.ISR 1 at RF 2 is the default",
+			brokers: 3,
+			primary: &topicShape{simName: "orders", partitions: 1, rf: 2, minISR: 1, cleanupPolicy: "delete"},
+			want:    "3x1x2",
+		},
+		{
+			name:    "primary min.ISR 2 at RF 2 is not the default",
+			brokers: 3,
+			primary: &topicShape{simName: "orders", partitions: 1, rf: 2, minISR: 2, cleanupPolicy: "delete"},
+			want:    "3x1x2xxxxxxxxxxx2~~~~",
+		},
+		{
+			name:    "primary min.ISR 1 at RF 3 is not the default, delete is dropped",
+			brokers: 5,
+			primary: &topicShape{simName: "orders", partitions: 4, rf: 3, minISR: 1, cleanupPolicy: "delete"},
+			want:    "5x4x3xxxxxxxxxxx1~~~~",
+		},
+		{
+			name:    "primary default min.ISR dropped, compact kept",
+			brokers: 5,
+			primary: &topicShape{simName: "orders", partitions: 4, rf: 3, minISR: 2, cleanupPolicy: "compact"},
+			want:    "5x4x3xxxxxxxxxxx~c~~~",
+		},
+		{
+			name:    "primary default min.ISR at RF 4 dropped, compact,delete kept",
+			brokers: 5,
+			primary: &topicShape{simName: "orders", partitions: 4, rf: 4, minISR: 3, cleanupPolicy: "compact,delete"},
+			want:    "5x4x4xxxxxxxxxxx~cd~~~",
+		},
+		{
+			name:    "primary retention only",
+			brokers: 5,
+			primary: &topicShape{simName: "orders", partitions: 4, rf: 3, minISR: 2, cleanupPolicy: "delete", retentionMs: i64p(3600000)},
+			want:    "5x4x3xxxxxxxxxxx~~3600000~~",
+		},
+		{
+			name:    "primary retention bytes only",
+			brokers: 5,
+			primary: &topicShape{simName: "orders", partitions: 4, rf: 3, retentionBytes: i64p(2000000)},
+			want:    "5x4x3xxxxxxxxxxx~~~2000000~",
+		},
+		{
+			name:    "primary defaults beside retention carry only the retention",
+			brokers: 5,
+			primary: &topicShape{simName: "orders", partitions: 4, rf: 3, minISR: 2, cleanupPolicy: "delete", retentionMs: i64p(3600000), retentionBytes: i64p(2000000)},
+			want:    "5x4x3xxxxxxxxxxx~~3600000~2000000~",
+		},
+		{
+			name:    "primary at every default beside an extra topic leaves the length-1 tail",
+			brokers: 6,
+			primary: &topicShape{simName: "orders", partitions: 3, rf: 3, minISR: 2, cleanupPolicy: "delete"},
+			extras:  []topicShape{{simName: "events", partitions: 2, rf: 2, minISR: 1, cleanupPolicy: "delete", retentionBytes: i64p(100)}},
+			want:    "6x3x3xevents~2~2~1~d~~100~~",
+		},
+		{
+			name:    "min.ISR above RF is clamped to RF before the default check",
+			brokers: 5,
+			primary: &topicShape{simName: "orders", partitions: 4, rf: 3, minISR: 9, cleanupPolicy: "delete"},
+			want:    "5x4x3xxxxxxxxxxx3~~~~",
+		},
 	}
 	for _, c := range cases {
 		if got := buildSize(c.brokers, c.primary, c.extras, c.diskless); got != c.want {
@@ -164,4 +244,83 @@ func TestAssignSimTopicNamesDedup(t *testing.T) {
 	if got["orders.v1"] != "orders-v1" {
 		t.Errorf("dot replace: %v", got)
 	}
+}
+
+// tsSize is the JSON the SIZE fixture lines carry: the simulator's decoded
+// FreePlaySize (src/sim/freePlayTopologies.ts), restricted to the fields this
+// mapping can set.
+type tsSize struct {
+	BrokersPerZone    []int `json:"brokersPerZone"`
+	Partitions        int   `json:"partitions"`
+	ReplicationFactor int   `json:"replicationFactor"`
+	ExtraTopics       []struct {
+		Name              string `json:"name"`
+		Partitions        int    `json:"partitions"`
+		ReplicationFactor int    `json:"replicationFactor"`
+		MinInSyncReplicas int    `json:"minInSyncReplicas"`
+		CleanupPolicy     string `json:"cleanupPolicy"`
+		RetentionMs       *int64 `json:"retentionMs"`
+		RetentionBytes    *int64 `json:"retentionBytes"`
+		DisklessEnable    bool   `json:"disklessEnable"`
+	} `json:"extraTopics"`
+	PrimaryMinIsr         *int   `json:"primaryMinIsr"`
+	PrimaryCleanup        string `json:"primaryCleanup"`
+	PrimaryRetentionMs    *int64 `json:"primaryRetentionMs"`
+	PrimaryRetentionBytes *int64 `json:"primaryRetentionBytes"`
+	PrimaryDiskless       bool   `json:"primaryDiskless"`
+	DisklessTiming        *struct {
+		CommitIntervalMs *int `json:"commitIntervalMs"`
+		UploadMs         *int `json:"uploadMs"`
+	} `json:"disklessTiming"`
+}
+
+// TestBuildSizeIsFixedPointOfTypeScript replays every SIZE fixture: take the
+// simulator's decoded size, hand buildSize the same shape with the primary
+// topic's min.ISR and cleanup spelled out even where they equal the defaults
+// (what Map passes when a cluster simply runs on them), and the slug must come
+// back byte-identical to the simulator's own re-encoding. A field left in that
+// the simulator drops on decode (`1~d~...` at RF 3 and cleanup delete) fails here.
+func TestBuildSizeIsFixedPointOfTypeScript(t *testing.T) {
+	tsFixtures(t, "SIZE", func(fields []string) {
+		if len(fields) != 4 || fields[1] != "=>" || !strings.HasPrefix(fields[3], ":: ") {
+			t.Fatalf("malformed SIZE fixture: %v", fields)
+		}
+		canonical := fields[2]
+		var sz tsSize
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(fields[3], ":: ")), &sz); err != nil {
+			t.Fatalf("%s: fixture json: %v", canonical, err)
+		}
+		if len(sz.BrokersPerZone) != 1 {
+			t.Fatalf("%s: single-dc fixtures only, got zones %v", canonical, sz.BrokersPerZone)
+		}
+		// The primary: an unset field is the simulator's default, which Map spells
+		// out (min.ISR from DescribeConfigs, cleanup "delete").
+		primary := &topicShape{
+			simName: PrimaryTopicName, partitions: sz.Partitions, rf: sz.ReplicationFactor,
+			minISR:        defaultPrimaryMinISR(sz.ReplicationFactor),
+			cleanupPolicy: "delete",
+			retentionMs:   sz.PrimaryRetentionMs, retentionBytes: sz.PrimaryRetentionBytes,
+		}
+		if sz.PrimaryMinIsr != nil {
+			primary.minISR = *sz.PrimaryMinIsr
+		}
+		if sz.PrimaryCleanup != "" {
+			primary.cleanupPolicy = sz.PrimaryCleanup
+		}
+		var extras []topicShape
+		for _, e := range sz.ExtraTopics {
+			extras = append(extras, topicShape{
+				simName: e.Name, partitions: e.Partitions, rf: e.ReplicationFactor,
+				minISR: e.MinInSyncReplicas, cleanupPolicy: e.CleanupPolicy,
+				retentionMs: e.RetentionMs, retentionBytes: e.RetentionBytes, disklessEnable: e.DisklessEnable,
+			})
+		}
+		diskless := disklessTail{primary: sz.PrimaryDiskless}
+		if sz.DisklessTiming != nil {
+			diskless.commitMs, diskless.uploadMs = sz.DisklessTiming.CommitIntervalMs, sz.DisklessTiming.UploadMs
+		}
+		if got := buildSize(sz.BrokersPerZone[0], primary, extras, diskless); got != canonical {
+			t.Errorf("buildSize = %q, the simulator re-encodes the same size as %q", got, canonical)
+		}
+	})
 }

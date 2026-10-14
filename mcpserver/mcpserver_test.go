@@ -113,6 +113,30 @@ func TestListTools(t *testing.T) {
 	}
 }
 
+// TestBuildURLRemoveGroup: remove_group (RG) is an input kind and is echoed back
+// from the URL, so a caller can drop the free-play default consumer group c1
+// the same way a mapped cluster link does.
+func TestBuildURLRemoveGroup(t *testing.T) {
+	s := newSession(t)
+	res := callTool(t, s, "build_playground_url", map[string]any{
+		"actions": []map[string]any{
+			{"kind": "remove_group", "at": 500, "groupId": "c1"},
+			{"kind": "add_group", "at": 750, "groupId": "analytics", "topics": []string{"orders"}},
+		},
+	})
+	var out BuildPlaygroundURLOutput
+	structured(t, res, &out)
+	if got, want := actionsParamOf(t, out.URL), "RG:c1@500,AG:analytics:orders@750"; got != want {
+		t.Errorf("URL actions param:\n  got  %q\n  want %q", got, want)
+	}
+	if len(out.DecodedActions) != 2 || out.DecodedActions[0].Kind != "remove_group" || out.DecodedActions[0].GroupID != "c1" {
+		t.Errorf("echo = %+v, want remove_group c1 first", out.DecodedActions)
+	}
+	wantToolError(t, callTool(t, s, "build_playground_url", map[string]any{
+		"actions": []map[string]any{{"kind": "remove_group", "at": 500}},
+	}), "actions[0]", "groupId")
+}
+
 // TestBuildURLSection82 rebuilds the doc's §8.2 worked example from structured
 // action objects and asserts the URL carries the exact documented action log.
 func TestBuildURLSection82(t *testing.T) {

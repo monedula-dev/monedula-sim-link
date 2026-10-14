@@ -82,8 +82,11 @@ func TestConnectEndToEnd(t *testing.T) {
 	// for every topic, min.insync.replicas=1 and cleanup.policy=delete — the
 	// tail carries the primary's (index 10) and payments' (index 0) real
 	// DescribeConfigs values; retention.bytes stays empty (kfake's -1/disabled
-	// sentinel is treated as unset, see snapshot/kafka.go).
-	const wantSize = "3x2x3xpayments~3~3~1~d~604800000~~~xxxxxxxxxx1~d~604800000~~"
+	// sentinel is treated as unset, see snapshot/kafka.go). Index 10 is canonical:
+	// the primary's min.ISR 1 is not the RF-3 default (2) so it is kept, but its
+	// cleanup `delete` is the default and is left out (`1~~604800000~~`, the form
+	// the simulator itself re-encodes to).
+	const wantSize = "3x2x3xpayments~3~3~1~d~604800000~~~xxxxxxxxxx1~~604800000~~"
 	if got := q.Get("size"); got != wantSize {
 		t.Fatalf("size = %q, want %q", got, wantSize)
 	}
@@ -94,8 +97,8 @@ func TestConnectEndToEnd(t *testing.T) {
 	}
 	// Deterministic log: with 3 brokers at RF 3 every replica SET is all
 	// brokers, so no reassign; all brokers online and in-sync, so no kills or
-	// slowdowns. Just the template-producer removal and the per-topic produce
-	// bursts: orders p0×2 + p1×1, payments p2×1.
+	// slowdowns. Just the template-producer and template-consumer-group removal
+	// and the per-topic produce bursts: orders p0×2 + p1×1, payments p2×1.
 	var kinds []string
 	producesPerTopicPartition := map[string]int{}
 	for _, e := range entries {
@@ -116,7 +119,7 @@ func TestConnectEndToEnd(t *testing.T) {
 			producesPerTopicPartition[p.Topic+"/"+strconv.Itoa(pid)]++
 		}
 	}
-	wantKinds := []string{"RP", "AP", "P", "P", "P", "RP", "AP", "P", "RP"}
+	wantKinds := []string{"RP", "RG", "AP", "P", "P", "P", "RP", "AP", "P", "RP"}
 	if strings.Join(kinds, ",") != strings.Join(wantKinds, ",") {
 		t.Fatalf("action kinds = %v, want %v", kinds, wantKinds)
 	}
@@ -131,7 +134,7 @@ func TestConnectEndToEnd(t *testing.T) {
 	}
 
 	// The dry run printed the decoded entries and the name mappings.
-	if !strings.Contains(stdout.String(), "RP:p1@500") || !strings.Contains(stdout.String(), "orders -> orders") {
+	if !strings.Contains(stdout.String(), "RP:p1@500") || !strings.Contains(stdout.String(), "RG:c1@750") || !strings.Contains(stdout.String(), "orders -> orders") {
 		t.Fatalf("dry-run output incomplete:\n%s", stdout.String())
 	}
 }

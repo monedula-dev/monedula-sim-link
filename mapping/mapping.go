@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/monedula-dev/monedula-sim-link/actionlog"
 	"github.com/monedula-dev/monedula-sim-link/snapshot"
@@ -30,6 +31,11 @@ type Options struct {
 	// PinnedTopics are the topic names the caller listed exactly (--topics).
 	// An over-cap selection keeps them before ranking the rest.
 	PinnedTopics []string
+	// ProducersWindow is how long before the snapshot a producer's last write may
+	// be for the producer to count as active (--producers-window). Zero uses
+	// DefaultProducersWindow. Only used when the snapshot carries a producers
+	// read (snapshot.ClusterSnapshot.Producers).
+	ProducersWindow time.Duration
 }
 
 // DefaultMaxRecordsPerPartition is the --max-records-per-partition default.
@@ -72,6 +78,19 @@ const produceSettleMs = 2000
 // removes it first so the playground's auto-produce loop cannot add records
 // beyond the snapshot-derived ones.
 const templateProducerID = "p1"
+
+// templateGroupID is the consumer group the single-DC free-play template starts
+// with. TEMPLATES['single-dc'] carries the `consumer: { id: 'c1' }` sugar, which
+// buildConsumerGroups (src/sim/engine.ts) expands into a one-member group whose
+// group id AND member id are both "c1", subscribed to the primary topic. The
+// mapping always removes it (RG) at the start so a fake consumer does not sit
+// beside the real groups it adds. A real group with the same id is added fresh
+// by its own add_group later in the log: remove_group takes the whole group and
+// its member with it, the template's first scheduled consumer poll (t = 800 ms)
+// fires between the removal at 750 ms and the first possible add_group at 1000 ms
+// and dies on the missing group, so the re-added group starts clean with its own
+// topics and members (checked against the engine, docs/mapping.md).
+const templateGroupID = "c1"
 
 // mappedTopic is one selected topic after clamping and renaming.
 type mappedTopic struct {
@@ -255,8 +274,11 @@ func Map(snap snapshot.ClusterSnapshot, opts Options) (*Result, error) {
 		at += stepMs
 	}
 
-	// 1. Remove the template producer before anything else.
+	// 1. Remove the template producer and the template consumer group before
+	// anything else. The group goes even when a real group has the same id: that
+	// one is added fresh by its own add_group later (templateGroupID).
 	emit(actionlog.RemoveProducer{ProducerID: templateProducerID})
+	emit(actionlog.RemoveGroup{GroupID: templateGroupID})
 
 	// 2. Reassign every partition whose real replica set differs from the
 	// simulator's default placement (set comparison: replica ORDER is preference
@@ -365,14 +387,14 @@ func Map(snap snapshot.ClusterSnapshot, opts Options) (*Result, error) {
 	}
 
 	// 6. Consumer groups: map each real group that has a committed offset on at
-	// least one rendered topic. add_group creates the group empty; add_consumer
-	// then joins its (capped) real members. A group with measurable aggregate
-	// lag across its rendered partitions has its auto.offset.reset switched to
-	// earliest right after creation (before its first poll), so the simulator
-	// shows it draining the topic's synthetic backlog instead of starting
-	// caught up — real committed offsets are not carried exactly; see
-	// docs/mapping.md. When more groups qualify than MaxGroups, the ones with
-	// the most lag are kept (pickGroups).
+	// least one rendered topic. When more groups qualify than MaxGroups, the ones
+	// with the most lag are kept (pickGroups). add_group creates the group empty;
+	// add_consumer then joins its (capped) real members. A group with measurable
+	// aggregate lag across its rendered partitions has its auto.offset.reset
+	// switched to earliest right after creation (before its first poll), so the
+	// simulator shows it draining the topic's synthetic backlog instead of
+	// starting caught up - real committed offsets are not carried exactly; see
+	// docs/mapping.md.
 	mappedByReal := make(map[string]*mappedTopic, len(mapped))
 	for i := range mapped {
 		mappedByReal[mapped[i].real] = &mapped[i]
@@ -456,6 +478,22 @@ func Map(snap snapshot.ClusterSnapshot, opts Options) (*Result, error) {
 		memberNames := assignUniqueNamesIndexed(memberReals, simMemberID, maxSimIDLen)
 		for _, sim := range memberNames {
 			emit(actionlog.AddConsumer{GroupID: simGroup, MemberID: sim})
+		}
+	}
+
+	// 7. Producers (opt-in, --producers): the producers that wrote to the rendered
+	// topics lately stay in the link as free-play producers, pinned to the topic
+	// they wrote to most. They go last, after the keyed-record replay and its
+	// transient producers are gone, so the replay is untouched and at most 4
+	// producers are ever alive (the engine's cap). The playground's auto-loop,
+	// on by default in free play, then keeps them producing. Producers listed by
+	// DescribeProducers are idempotent or transactional, and add_producer already
+	// creates a producer with the simulator's default config (acks=all with
+	// idempotence), so no config change follows; a transactional producer cannot
+	// be expressed (planProducers warns).
+	if snap.Producers != nil {
+		for _, pl := range planProducers(snap.Producers, mapped, opts.ProducersWindow, warnf) {
+			emit(actionlog.AddProducer{ProducerID: pl.simID, Topic: pl.topic})
 		}
 	}
 

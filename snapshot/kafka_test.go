@@ -17,12 +17,18 @@ import (
 // placed on chosen partitions via the manual partitioner.
 func startFake(t *testing.T) *kfake.Cluster {
 	t.Helper()
-	cluster, err := kfake.NewCluster(
+	return startFakeWith(t)
+}
+
+// startFakeWith is startFake with extra cluster options (a version cap, say).
+func startFakeWith(t *testing.T, extra ...kfake.Opt) *kfake.Cluster {
+	t.Helper()
+	cluster, err := kfake.NewCluster(append([]kfake.Opt{
 		kfake.NumBrokers(3),
 		kfake.SeedTopics(2, "orders"),
 		kfake.SeedTopics(3, "payments"),
 		kfake.SeedTopics(1, "_hidden"),
-	)
+	}, extra...)...)
 	if err != nil {
 		t.Fatalf("kfake: %v", err)
 	}
@@ -52,6 +58,12 @@ func startFake(t *testing.T) *kfake.Cluster {
 
 func fetch(t *testing.T, cluster *kfake.Cluster, sel Selection) (ClusterSnapshot, []string, error) {
 	t.Helper()
+	return fetchWith(t, cluster, sel, FetchOptions{})
+}
+
+// fetchWith is fetch through FetchWith.
+func fetchWith(t *testing.T, cluster *kfake.Cluster, sel Selection, opts FetchOptions) (ClusterSnapshot, []string, error) {
+	t.Helper()
 	client, err := Connect(ConnectConfig{Brokers: cluster.ListenAddrs()})
 	if err != nil {
 		t.Fatalf("connect: %v", err)
@@ -59,7 +71,7 @@ func fetch(t *testing.T, cluster *kfake.Cluster, sel Selection) (ClusterSnapshot
 	t.Cleanup(client.Close)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return client.Fetch(ctx, sel)
+	return client.FetchWith(ctx, sel, opts)
 }
 
 func TestFetchSnapshotsFakeCluster(t *testing.T) {

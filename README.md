@@ -29,11 +29,11 @@ Snapshot two topics of a local cluster and print the playground link that shows 
 monedula-sim-link connect --brokers localhost:9092 --topics orders,payments
 ```
 
-Add `--dry-run` to see the cluster shape, the real-to-simulator name tables and the decoded actions before the URL. [Connect to a secured cluster](https://monedula.dev/flock/docs/sim-link/how-to/connect-to-a-secured-cluster/) covers TLS, mTLS and SASL (PLAIN and SCRAM).
+Add `--dry-run` to see the cluster shape, the real-to-simulator name tables and the decoded actions before the URL. Add `--producers` to also show some of the writers: it reads the idempotent and transactional producers (DescribeProducers) whose last write to the selected topics falls in the last 15 minutes (`--producers-window` changes that), and adds up to four of them to the link, named `pid-<producerId>`. It is not a list of every writer: a producer with `enable.idempotence=false` and no transaction has no producer id and never appears, the time compared is the record timestamp of its last batch (the producing client's clock on CreateTime topics, the broker's on LogAppendTime topics, so event-time or historical timestamps can fall outside the window), and brokers keep producer state only for `producer.id.expiration.ms` (24 hours by default), so a longer window shows nothing extra. It is off by default because it needs READ on each topic and Kafka 2.8 or newer; without it no producer is read. [Connect to a secured cluster](https://monedula.dev/flock/docs/sim-link/how-to/connect-to-a-secured-cluster/) covers TLS, mTLS and SASL (PLAIN and SCRAM).
 
 ## Read-only
 
-`connect` sends only read requests: ApiVersions, Metadata, ListOffsets, ListGroups, DescribeGroups, OffsetFetch and DescribeConfigs. Metadata goes out with `AllowAutoTopicCreation=false`, so looking up a topic never creates it. It joins no consumer group and commits no offset. The whole client is in [`snapshot/kafka.go`](snapshot/kafka.go), so the guarantee can be audited in one file.
+`connect` sends only read requests: ApiVersions, Metadata, ListOffsets, ListGroups, FindCoordinator (the client's lookup of a group's coordinator for DescribeGroups and OffsetFetch), DescribeGroups, OffsetFetch and DescribeConfigs, and DescribeProducers only when you pass `--producers`. Metadata goes out with `AllowAutoTopicCreation=false`, so looking up a topic never creates it. It joins no consumer group and commits no offset. The whole client is in [`snapshot/kafka.go`](snapshot/kafka.go), so the guarantee can be audited in one file.
 
 ## MCP server
 

@@ -80,8 +80,10 @@ func TestClusterToURLEndToEnd(t *testing.T) {
 	// every topic (min.insync.replicas=1, cleanup.policy=delete); the tail
 	// carries the primary's (index 10) and payments' (index 0) real
 	// DescribeConfigs values, retention.bytes stays empty (kfake's -1/disabled
-	// sentinel is treated as unset, see snapshot/kafka.go).
-	const wantSize = "3x2x3xpayments~3~3~1~d~604800000~~~xxxxxxxxxx1~d~604800000~~"
+	// sentinel is treated as unset, see snapshot/kafka.go). Index 10 is
+	// canonical: min.ISR 1 is not the RF-3 default so it is kept, cleanup
+	// `delete` is the default so it is left out (`1~~604800000~~`).
+	const wantSize = "3x2x3xpayments~3~3~1~d~604800000~~~xxxxxxxxxx1~~604800000~~"
 	if out.Size != wantSize {
 		t.Fatalf("size = %q, want %q", out.Size, wantSize)
 	}
@@ -93,7 +95,7 @@ func TestClusterToURLEndToEnd(t *testing.T) {
 	}
 
 	// Decode the URL's actions and assert the deterministic log: template
-	// producer removed, then per-topic keyed produce bursts (no reassign/kill
+	// producer and template consumer group removed, then per-topic keyed produce bursts (no reassign/kill
 	// since 3 brokers at RF 3 are all in-sync).
 	entries, err := simurl.DecodeActionsFromURL(actionsParamOf(t, out.URL))
 	if err != nil {
@@ -118,7 +120,7 @@ func TestClusterToURLEndToEnd(t *testing.T) {
 			producesPerTopicPartition[e.Topic+"/"+strconv.Itoa(pid)]++
 		}
 	}
-	wantKinds := "remove_producer,add_producer,produce,produce,produce,remove_producer,add_producer,produce,remove_producer"
+	wantKinds := "remove_producer,remove_group,add_producer,produce,produce,produce,remove_producer,add_producer,produce,remove_producer"
 	if strings.Join(kinds, ",") != wantKinds {
 		t.Fatalf("action kinds = %v, want %v", kinds, wantKinds)
 	}

@@ -5,11 +5,29 @@
 // hand-built fixtures.
 package snapshot
 
+import "time"
+
 // Broker is a single cluster node.
 type Broker struct {
 	ID     string
 	Rack   string // "" when the broker has no rack assigned
 	Online bool
+}
+
+// ProducerWrite is one active producer's footprint on one partition, as
+// DescribeProducers (KIP-664) reports it. Kafka lists idempotent and
+// transactional producers alike; a producer that uses neither does not appear
+// at all.
+type ProducerWrite struct {
+	ProducerID int64
+	// LastTimestamp is the timestamp, in ms since the Unix epoch, of the
+	// producer's last write on the partition; negative when the broker did not
+	// report one.
+	LastTimestamp int64
+	// CurrentTxnStartOffset is the first offset of the producer's open
+	// transaction on the partition, or -1 when it has none (an idempotent
+	// producer, or a transactional one between transactions).
+	CurrentTxnStartOffset int64
 }
 
 // Partition is one topic partition's placement and offset bounds.
@@ -20,6 +38,10 @@ type Partition struct {
 	ISR            []string // in-sync replica broker ids
 	EarliestOffset int64
 	LatestOffset   int64
+	// Producers is what DescribeProducers reported for the partition, sorted by
+	// producer id. Empty unless the snapshot was taken with FetchOptions.Producers
+	// and the partition answered.
+	Producers []ProducerWrite
 }
 
 // TopicConfig is the subset of a topic's DescribeConfigs result the mapping
@@ -60,9 +82,31 @@ type Group struct {
 	Offsets map[string]map[int]int64
 }
 
+// ProducersRead records how the opt-in DescribeProducers read went, so the
+// mapping can say what is missing instead of silently showing fewer producers.
+// Every failure here is non-fatal: the snapshot is still complete without it.
+type ProducersRead struct {
+	// At is the time the read was taken (the reader's clock); the mapping
+	// measures its activity window back from it.
+	At time.Time
+	// Unsupported is true when the cluster cannot answer DescribeProducers:
+	// UNSUPPORTED_VERSION, or a broker too old to know the API (before Kafka 2.8).
+	Unsupported bool
+	// ClusterDenied is true when a broker answered CLUSTER_AUTHORIZATION_FAILED.
+	ClusterDenied bool
+	// DeniedTopics lists, sorted, the topics with a partition that answered
+	// TOPIC_AUTHORIZATION_FAILED (the request needs READ on the topic).
+	DeniedTopics []string
+	// Errors describes every other failure, one entry each: a request that did
+	// not complete, or partitions that answered another error code.
+	Errors []string
+}
+
 // ClusterSnapshot is the whole read-only view fed into the mapping.
 type ClusterSnapshot struct {
 	Brokers []Broker
 	Topics  []Topic
 	Groups  []Group
+	// Producers is nil unless the snapshot was taken with FetchOptions.Producers.
+	Producers *ProducersRead
 }

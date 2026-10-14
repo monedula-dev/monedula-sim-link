@@ -23,9 +23,10 @@ omitted). Spec references: `docs/playground-url-api.md` in the website repo
    cap, the most eventful are kept (see *Caps* below). Each topic's
    `DescribeConfigs` result (cleanup policy, min.ISR, retention) travels with it.
 3. **Size param** — brokers/partitions/RF/config per the shape rules below.
-4. **Action log** — in fixed order: remove the free-play template producer →
-   reassignments → kills → replica slowdowns → per-topic produce bursts →
-   consumer groups. Actions are spaced 250 ms apart on the simulation timeline
+4. **Action log** - in fixed order: remove the free-play template producer and
+   template consumer group → reassignments → kills → replica slowdowns →
+   per-topic produce bursts → consumer groups → producers (only with
+   `--producers`). Actions are spaced 250 ms apart on the simulation timeline
    starting at t=500 ms.
 
 ## Cluster shape: the `size` param
@@ -37,10 +38,14 @@ index 10 for the primary topic's own min.ISR/cleanup/retention when it
 carries a config override (§11.4), and - KIP-1163 draft, v2.0+ -
 tail index 17 for the primary diskless flag + diskless timing when either is
 set (§11.3/§11.4). Values are pre-clamped to the
-simulator's own caps so the slug is a **fixed point** of the simulator's
-`clampFreePlaySize` — what the URL says is exactly what renders. The size
-fixtures in `mapping/size_test.go` were round-tripped through the real
-TypeScript codec (`src/sim/freePlayTopologies.ts`) to prove that.
+simulator's own caps and written in the simulator's own canonical form, so the
+slug is a **fixed point** of its codec: decoding it with `decodeFreePlaySize`
+and encoding the result with `encodeFreePlaySize` gives the same string back.
+What the URL says is exactly what renders, and the playground never rewrites
+the link when it loads it. The `SIZE` lines in `mapping/testdata/ts-fixtures.txt`
+are that round trip, run through the real TypeScript codec
+(`src/sim/freePlayTopologies.ts`), and `TestBuildSizeIsFixedPointOfTypeScript`
+in `mapping/size_test.go` replays every one of them against `buildSize`.
 
 - **No real `orders` topic selected** → the base still describes the primary,
   as a minimal `1x1` placeholder (the primary cannot be removed via the URL).
@@ -54,7 +59,21 @@ TypeScript codec (`src/sim/freePlayTopologies.ts`) to prove that.
   default); remote-storage tiering is never fetched, so those two trailing
   fields stay empty.
 - **Primary topic config** (tail index 10) carries the same four fields for
-  `orders` when any of them is known — omitted entirely when none is.
+  `orders`, but only those that differ from the simulator's defaults, because
+  the simulator drops a field equal to its default when it decodes the slug
+  (`clampPrimaryTopic`). Cleanup `delete` is left out. `min.insync.replicas` is
+  left out when it equals the default for the primary's RF, `max(1, RF-1)` (so 2
+  at RF 3, and 1 at RF 1 and RF 2). Retention is carried when set. When nothing
+  is left, tail index 10 is omitted entirely and the slug can end at the base:
+  an `orders` on its defaults at 3 partitions and RF 3 is just `3x3x3`. A
+  min.ISR of 1 at RF 3 with cleanup `delete` and a 7-day retention is
+  `...xxxxxxxxxx1~~604800000~~`, not `...1~d~604800000~~`. The MCP
+  `build_playground_url` shape tool writes the same segment through the same
+  helper (`mapping.EncodePrimaryConfigTail`), so `minInSyncReplicas: 2` at RF 3 or
+  `cleanupPolicy: delete` on `orders` leaves the slug at `6x4x3`. In an extra
+  topic's chunk a min.ISR and a cleanup are always written; the shape tool writes
+  Kafka's default (min.ISR 1, `delete`) for one it leaves unset, because the
+  simulator drops a whole extra topic whose min.ISR field is not a number.
 - **Diskless (v2.0+, KIP-1163 draft)**: an extra topic's `disklessEnable`
   appends a 10th `~1` field; the primary diskless flag + timing (tail
   index 17) encodes via the exported `mapping.EncodeDisklessTail` (backed by
@@ -108,6 +127,17 @@ dropped (`mapping/rank.go`):
 
 Members per group (4) are not a failing cap: the first 4 are always kept, with
 a warning, with or without `--clamp`.
+
+The caps above are the single-DC ones this mapping targets. The MCP
+`build_playground_url` shape tool also validates the multi-DC topologies, and
+`stretched-3` has no constant partition cap: it follows the simulator's
+`maxFreePlayPartitions`, the largest count from 1 to 6 that keeps the busiest
+broker within 3 partition strips at the chosen RF (partition `i` sits on brokers
+`i..i+rf-1` modulo the broker count, so after `p` partitions a broker holds at
+most `rf*floor(p/brokers) + min(rf, p mod brokers)` of them). It never exceeds 6:
+9 brokers at RF 3 allow 6 partitions and reject 7, 9 brokers at RF 4 allow 3.
+`mcpserver/shape.go` ports the loop and `mcpserver/shape_test.go` pins its
+answers to the simulator's own function.
 
 ## Topic and broker naming
 
@@ -176,12 +206,31 @@ apart, ascending synthetic timestamps), and `RP:kpN` removes the producer 2 s
 after the last record (past the produce flush delay). At most one synthetic
 producer is alive at a time — free play caps producers at 4 — and the template
 producer `p1` was removed at t=500 so the playground's auto-produce loop adds
-nothing on top.
+nothing on top. (Without `--producers` that stays true for the whole session.
+With it, the auto-loop has the producers it adds to run, see *Producers* below.)
 
 A partition whose rendered replicas are all dead gets **no** produces (they
 could never acknowledge); a warning explains the skip.
 
 ## Consumer groups: `AG`/`AC` + the lag approximation
+
+**The template group goes first.** The single-DC free-play template starts with
+a default consumer group `c1` (one member, also `c1`, reading the primary topic)
+as well as a producer `p1`. The mapping removes the producer with `RP:p1@500` and
+the group with `RG:c1@750` before anything else, so a fake consumer does not sit
+beside the real groups, and it does so even when the cluster has no consumer
+group at all.
+
+*A real group called `c1`.* The template group is removed all the same, with
+no exception and no warning. The real group is added fresh later in the log by its
+normal `AG:c1:<its topics>` and its `AC` members, so it shows its real topics and
+members and nothing of the template's. Replayed through the simulator's own
+engine, `RP:p1@500,RG:c1@750,AG:c1:orders@1000,AC:c1:worker-1@1250` leaves one
+group `c1` with exactly the member `worker-1`: `remove_group` takes the whole
+group and its member `c1` away, the template's first consumer poll (t = 800 ms)
+fires between the removal (750 ms) and the first possible `add_group` (1000 ms)
+and dies on the missing group, and the re-added group schedules its own single
+poll chain.
 
 `fetchGroups` (`snapshot/kafka.go`) lists every group (`ListGroups`, filtered
 to `ProtocolType == "consumer"` — Kafka Connect workers and KIP-932 share
@@ -222,6 +271,83 @@ forward through the topic's synthetic trailing records (see *Data volume*
 above) — the visual effect is "this group is behind", not a byte-accurate lag
 count.
 
+## Producers: `--producers`, `AP`
+
+Off by default. Without `--producers` the tool sends no `DescribeProducers`
+request and the link has no producers, exactly as before. The flag makes
+`fetchProducers` (`snapshot/kafka.go`) send one `DescribeProducers` request
+(KIP-664, Kafka 2.8 or newer) for every partition of the selected topics, split
+by partition leader. It is a read, but it needs **READ on each topic**, which is
+why it is opt-in.
+
+**This is not a list of every writer.** `DescribeProducers` reports a broker's
+producer state, and a broker only has state for **idempotent and transactional**
+producers. A producer with `enable.idempotence=false` and no transaction has no
+producer id and never appears, however busy it is. What the link shows is the
+idempotent and transactional producers that wrote lately, and nothing about the
+rest. Three more limits shape that:
+
+- The activity time is the **record timestamp** of the producer's last batch on
+  the partition, not the arrival time: the producing client's clock on a
+  `CreateTime` topic, the broker's clock on a `LogAppendTime` topic. A producer
+  that stamps event time or replays historical records can look old (or, on a
+  skewed clock, be in the future) however recently it wrote.
+- Brokers keep producer state only for `producer.id.expiration.ms` (24 hours by
+  default), so a `--producers-window` longer than that shows nothing extra.
+- A producer id is one producer instance: a restarted application is a new id.
+
+The reply lists, per partition, those producer ids with the timestamp of each
+one's last write and the first offset of its open transaction, if any. The
+mapping then:
+
+1. **Counts a producer as active** on a partition when that timestamp is within
+   `--producers-window` (default 15m) before the snapshot time, taken on the
+   machine running the tool, so a large clock difference to the brokers or the
+   producers shifts the window. A write with no timestamp is not counted. Only the
+   topics and partitions the link renders count (after the topic and partition
+   caps), because a producer needs a topic to be pinned to.
+2. **Ranks** the active producers by how many partitions they wrote to, then by
+   the most recent write, then by producer id, and keeps the top 4 (free play
+   renders at most `MAX_FREE_PLAY_PRODUCERS` = 4, and the engine ignores an
+   `add_producer` past 4 live ones). Over 4, one warning names the ones kept and
+   dropped, like the group cap.
+3. **Names** each `pid-<producerId>` (a Kafka producer id is a non-negative 64-bit
+   integer, so the name is at most 23 characters, inside the 40 the other
+   generated ids stay under, and clear of the template `p1` and the transient
+   `kpN`).
+4. **Pins** it to the rendered topic it wrote to on the most active partitions; a
+   tie goes to the earlier topic in the usual order (`orders`, then
+   alphabetical).
+5. **Emits**, after everything else (the keyed replay and its transient
+   producers are gone, so the replay is untouched, and the consumer groups are in
+   place), one `AP:pid-<id>:<topic>` per producer and nothing more: the producer
+   is created with the simulator's default config (`acks=all`, idempotence on), so
+   there is no config change after it. The added producers are not removed again,
+   so the playground's auto-loop, which is on by default in free play, produces
+   from them: the link keeps showing writes from the producers it found. Their
+   records come on top of the synthetic ones, so offsets keep growing.
+
+**Idempotent, not transactional.** Every producer `DescribeProducers` lists is
+idempotent or transactional, and the simulator's default for a new producer is
+already idempotent (`acks=all`, idempotence on), so each is added with that
+default config. A producer with an open transaction (`CurrentTxnStartOffset`
+of 0 or more on some partition) cannot be shown as transactional: the URL grammar
+has no `transactional.id` (it is not on the `config_change` whitelist, and the
+size slug's producer list has no such field), and `begin_transaction` does
+nothing for a producer without one, so a `BT` action would be ignored by the
+engine without a trace. It is added as an idempotent producer and a warning
+names it and the partitions. A transactional producer between transactions looks
+like an idempotent one, so it is not told apart.
+
+**When the read does not work** the link is still built, without the producers
+that could not be read, and a warning says why: `UNSUPPORTED_VERSION` or a broker
+too old to know the API (Kafka before 2.8), `CLUSTER_AUTHORIZATION_FAILED`,
+`TOPIC_AUTHORIZATION_FAILED` (naming the topics; the producers of the topics that
+were readable are still used), another error code on some partitions, or a read
+that did not finish in 5 seconds. With nothing wrong but no idempotent or
+transactional producer inside the window, a warning says so; that is not the same
+as "nobody wrote".
+
 ## Self-validation
 
 `Map` verifies its own output round-trips the codec
@@ -252,11 +378,20 @@ raw-DEFLATE layout this tool emits and its own lz-string layout (see
   broker racks are captured in the snapshot but not encoded. (The simulator's
   rack model is a size-param extension the mapping does not emit.)
 - **Per-client `client.rack`** (v2.0+, KIP-1163 draft). The TypeScript codec
-  now encodes an optional rack on each initial producer / consumer group
-  (`freePlayTopologies.ts`), but neither `Map` nor the MCP declarative shape
-  (`mcpserver.ClusterShape`) models initial producers or consumer groups at
-  all - there is nothing in this tool to carry a rack on, so this stays
-  unrepresented until that surface exists.
+  encodes an optional rack on each initial producer / consumer group in the
+  size slug (`freePlayTopologies.ts`, tail indices 1 and 2). Neither `Map` nor
+  the MCP declarative shape (`mcpserver.ClusterShape`) writes those lists: the
+  producers (`--producers`) and groups it adds are action-log entries
+  (`add_producer`, `add_group`), and an `add_producer` has no rack field, so
+  this stays unrepresented.
+- **Producers that are not idempotent or transactional.** They have no producer
+  id on the broker, so `--producers` cannot see them at all (see *Producers*).
+- **Producer settings and transactions.** `--producers` shows some of who writes,
+  not how: a producer's `acks`, linger, batching and the like are not read (the
+  broker does not report them), so every added producer has the simulator's
+  default config (`acks=all`, idempotence on), and a transactional producer is
+  shown as an idempotent one (see *Producers*). Only up to 4 are shown, ranked by how many
+  partitions they wrote to.
 - **Remote-storage tiering config.** `remote.storage.enable` and
   `local.retention.ms` are never fetched, even though `min.insync.replicas` /
   `cleanup.policy` / `retention.ms` / `retention.bytes` now are.
