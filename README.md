@@ -45,7 +45,7 @@ claude mcp add monedula-sim-link -- monedula-sim-link mcp
 
 ## Building and testing
 
-With Go 1.25 or newer:
+With Go 1.26 or newer:
 
 ```bash
 git clone https://github.com/monedula-dev/monedula-sim-link.git
