@@ -85,6 +85,17 @@ in `mapping/size_test.go` replays every one of them against `buildSize`.
   `mapping/testdata/ts-fixtures.txt`). `mcpserver.ClusterShape.DisklessTiming`
   (the declarative-shape MCP tool) calls the same exported helper, so the two
   Go entry points into this tail segment cannot drift apart.
+- **Schema Registry (tail index 14)**: written only by the MCP declarative
+  shape (`mcpserver.ClusterShape.SchemaRegistry`); `Map` never sets it, since
+  `connect` does not read a real registry. `{}` is `1`, the abstract registry
+  (subjects and compatibility, no instances). v2.2 preview: `instancesPerDc`
+  1-3 writes `2`-`4`, and `followerOnlyDcs` appends `r` and the sorted DC
+  indexes (zone order), e.g. `3r1` = 2 instances per DC, the second DC
+  follower-only. The slug is the 15-segment tail when nothing later is set,
+  e.g. `1-1-1x3x3xxxxxxxxxxxxxxx3r1` on stretched-3. Out-of-range counts or
+  indexes are refused rather than clamped. The `SIZE-SR` lines in
+  `mapping/testdata/ts-fixtures.txt` pin both the slugs and the instance names
+  the simulator builds from them.
 - **RF** per topic is the widest replica list observed across its partitions,
   clamped to the rendered broker count.
 - A literal `x` in a topic name is slug-escaped to `*` (the simulator's
@@ -348,6 +359,36 @@ that did not finish in 5 seconds. With nothing wrong but no idempotent or
 transactional producer inside the window, a warning says so; that is not the same
 as "nobody wrote".
 
+## Schema Registry failures: `KSR`/`RSR`/`SFO`/`RPR`/`SRE` (v2.2 preview)
+
+`connect` never emits these: it reads no Schema Registry. The MCP
+`build_playground_url` tool writes them from its action list, and
+`validate_actions` decodes them, with the playground's own codes
+(playground-url-api.md §2):
+
+| Action kind | Code | Notes |
+|---|---|---|
+| `kill_sr` | `KSR:<instanceId>` | stops one SR instance; the SR leader is re-elected on the same step |
+| `restart_sr` | `RSR:<instanceId>` | |
+| `sr_failover` | `SFO:<deploymentId>` | a follower-only deployment on a mirrored `_schemas` takes over writes; a no-op for any other deployment |
+| `restart_producer` | `RPR:<producerId>[:n]` | restarts the producer with an empty schema cache; `:n` (`newSchema`) deploys the next schema version of its subject |
+| `set_sr_eligibility` | `SRE:<instanceId>:<1\|0>` | `leader.eligibility`: `1` may lead, `0` follower-only |
+
+The instances exist only in a session whose shape has
+`schemaRegistry.instancesPerDc` >= 1. They are named `sr-<dc>-<n>` in one
+deployment named `sr`: `sr-dc-1-1` on single-dc and diskless-3az (one DC,
+named `dc-1`), `sr-dc-a-1` on stretched-3, `sr-primary-1` / `sr-dr-1` on
+active-passive, `sr-west-1` / `sr-east-1` on active-active. The tool lists
+them in its notes. Like broker ids, instance ids are not checked against the
+shape: an id the session does not have is a no-op in the playground.
+
+The playground reads an `RPR` flag only when it is `n` and ignores anything
+else after the producer id, so the decoder does the same: `RPR:p1:x` previews
+as a plain restart, not a drop. These codes are a v2.2 preview of the
+simulator; a deployment of the playground older than v2.2 drops them.
+`register_schema` (`RSV`) and `set_schema_compatibility` (`SSC`) are not
+encodable here yet.
+
 ## Self-validation
 
 `Map` verifies its own output round-trips the codec
@@ -398,6 +439,9 @@ raw-DEFLATE layout this tool emits and its own lz-string layout (see
 - **Diskless topics (v2.0+, KIP-1163 draft).** `diskless.enable` is never
   fetched either - it has no real `DescribeConfigs` equivalent today. The
   codec can encode it (see "Cluster shape" above), but `Map` never sets it.
+- **Schema Registry.** `connect` reads no real registry, subjects or SR
+  instances; only the MCP declarative shape writes the registry segment (see
+  "Cluster shape" above).
 - **Real leadership.** See the placement approximation note.
 - **Live traffic.** The snapshot is a point in time; the URL replays a static
   reconstruction, not a stream.

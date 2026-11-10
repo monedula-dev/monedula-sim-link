@@ -498,3 +498,120 @@ func TestShapeDisklessTimingMatchesTypeScriptFixtures(t *testing.T) {
 		t.Fatalf("replayed %d SIZE-DISKLESS-3AZ fixtures, want 2", checked)
 	}
 }
+
+// TestShapeSchemaRegistryMatchesTypeScriptFixtures replays the SIZE-SR lines of
+// mapping/testdata/ts-fixtures.txt (v2.2 preview), dumped from the real
+// TypeScript codec: shapeToParams must write the same slug for the same
+// registry, and its note must name the SR instances createCluster built.
+func TestShapeSchemaRegistryMatchesTypeScriptFixtures(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "mapping", "testdata", "ts-fixtures.txt"))
+	if err != nil {
+		t.Fatalf("read fixtures: %v", err)
+	}
+	checked := 0
+	for _, line := range strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n") {
+		if !strings.HasPrefix(line, "SIZE-SR ") {
+			continue
+		}
+		head, js, ok := strings.Cut(strings.TrimPrefix(line, "SIZE-SR "), " :: ")
+		fields := strings.SplitN(head, " ", 4)
+		if !ok || len(fields) != 4 || fields[2] != "=>" {
+			t.Fatalf("malformed SIZE-SR fixture: %q", line)
+		}
+		typ, slug := fields[0], fields[1]
+		var instances []string
+		if err := json.Unmarshal([]byte(fields[3]), &instances); err != nil {
+			t.Fatalf("%s: instances json: %v", slug, err)
+		}
+		var sz struct {
+			BrokersPerZone    []int `json:"brokersPerZone"`
+			Partitions        int   `json:"partitions"`
+			ReplicationFactor int   `json:"replicationFactor"`
+			SrInstancesPerDc  int   `json:"srInstancesPerDc"`
+			SrFollowerOnlyDcs []int `json:"srFollowerOnlyDcs"`
+		}
+		if err := json.Unmarshal([]byte(js), &sz); err != nil {
+			t.Fatalf("%s: size json: %v", slug, err)
+		}
+		shape := &ClusterShape{
+			BrokersPerZone: sz.BrokersPerZone,
+			Topics:         []TopicShape{{Name: "orders", Partitions: sz.Partitions, ReplicationFactor: sz.ReplicationFactor}},
+			SchemaRegistry: &SchemaRegistryShape{InstancesPerDc: sz.SrInstancesPerDc, FollowerOnlyDcs: sz.SrFollowerOnlyDcs},
+		}
+		_, size, notes, err := shapeToParams(typ, shape)
+		if err != nil {
+			t.Errorf("%s %s: shapeToParams: %v", typ, slug, err)
+			continue
+		}
+		if size != slug {
+			t.Errorf("%s: size = %q, want %q", typ, size, slug)
+		}
+		var ids []string
+		for _, id := range instances {
+			ids = append(ids, strings.TrimSuffix(strings.TrimPrefix(id, "sr/"), "(f)"))
+		}
+		if got := srInstanceIDs(topologies[typ], sz.SrInstancesPerDc); strings.Join(got, ",") != strings.Join(ids, ",") {
+			t.Errorf("%s %s: instance ids %v, want %v", typ, slug, got, ids)
+		}
+		if len(ids) > 0 && !strings.Contains(strings.Join(notes, "\n"), strings.Join(ids, ", ")) {
+			t.Errorf("%s %s: notes %q do not list the instances %v", typ, slug, notes, ids)
+		}
+		checked++
+	}
+	if checked != 8 {
+		t.Fatalf("replayed %d SIZE-SR fixtures, want 8", checked)
+	}
+}
+
+func TestShapeSchemaRegistryValidation(t *testing.T) {
+	cases := []struct {
+		name    string
+		cluster string
+		sr      *SchemaRegistryShape
+		needles []string
+	}{
+		{"too many instances", "", &SchemaRegistryShape{InstancesPerDc: 4}, []string{"instancesPerDc 4", "0..3"}},
+		{"negative instances", "", &SchemaRegistryShape{InstancesPerDc: -1}, []string{"instancesPerDc -1"}},
+		{"follower-only without instances", "", &SchemaRegistryShape{FollowerOnlyDcs: []int{0}}, []string{"followerOnlyDcs", "instancesPerDc >= 1"}},
+		{"index past the DCs", "active-passive", &SchemaRegistryShape{InstancesPerDc: 1, FollowerOnlyDcs: []int{2}}, []string{"index 2", "primary, dr", "0..1"}},
+		{"negative index", "stretched-3", &SchemaRegistryShape{InstancesPerDc: 1, FollowerOnlyDcs: []int{-1}}, []string{"index -1"}},
+		{"duplicate index", "stretched-3", &SchemaRegistryShape{InstancesPerDc: 1, FollowerOnlyDcs: []int{1, 1}}, []string{"index 1", "twice"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, _, _, err := shapeToParams(c.cluster, &ClusterShape{SchemaRegistry: c.sr})
+			if err == nil {
+				t.Fatalf("expected an error")
+			}
+			for _, n := range append([]string{"shape.schemaRegistry"}, c.needles...) {
+				if !strings.Contains(err.Error(), n) {
+					t.Errorf("error %q does not mention %q", err, n)
+				}
+			}
+		})
+	}
+}
+
+func TestShapeSchemaRegistryCombinesWithOtherSegments(t *testing.T) {
+	// The abstract registry alone, on the default single-dc base: the base is
+	// no longer the default, so the slug is written (15-segment tail).
+	_, size, notes, err := shapeToParams("", &ClusterShape{SchemaRegistry: &SchemaRegistryShape{}})
+	if err != nil || size != "3x3x3xxxxxxxxxxxxxxx1" || len(notes) != 0 {
+		t.Fatalf("abstract registry: size %q notes %v err %v", size, notes, err)
+	}
+	// Rack-aware (index 3) + registry (index 14) share one tail.
+	_, size, _, err = shapeToParams("", &ClusterShape{Brokers: 4, RackAware: true, SchemaRegistry: &SchemaRegistryShape{InstancesPerDc: 1}})
+	if err != nil || size != "4x3x3xxxx1xxxxxxxxxxx2" {
+		t.Fatalf("rack-aware + registry: size %q err %v", size, err)
+	}
+	// A diskless primary (index 17) extends the tail past the registry.
+	_, size, _, err = shapeToParams("", &ClusterShape{Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 3, DisklessEnable: true}}, SchemaRegistry: &SchemaRegistryShape{InstancesPerDc: 2}})
+	if err != nil || size != "3x3x3xxxxxxxxxxxxxxx3xxxd" {
+		t.Fatalf("diskless + registry: size %q err %v", size, err)
+	}
+	// Every DC follower-only is allowed (the playground loads it) but noted.
+	_, _, notes, err = shapeToParams("", &ClusterShape{SchemaRegistry: &SchemaRegistryShape{InstancesPerDc: 1, FollowerOnlyDcs: []int{0}}})
+	if err != nil || !strings.Contains(strings.Join(notes, "\n"), "every DC is follower-only") {
+		t.Fatalf("all follower-only: notes %v err %v", notes, err)
+	}
+}

@@ -241,6 +241,11 @@ func (m *mulberry32) genAction() Action {
 		func() Action {
 			return TierOffload{Topic: m.safeID(), Partition: m.intn(0, 12), ToOffset: m.intn(0, 100000)}
 		},
+		func() Action { return KillSR{InstanceID: m.safeID()} },
+		func() Action { return RestartSR{InstanceID: m.safeID()} },
+		func() Action { return SRFailover{DeploymentID: m.safeID()} },
+		func() Action { return RestartProducer{ProducerID: m.safeID(), NewSchema: m.boolean()} },
+		func() Action { return SetSREligibility{InstanceID: m.safeID(), Eligible: m.boolean()} },
 		func() Action {
 			// elect_preferred_leaders: topicless (all-topic-partitions, "*") or scoped.
 			if m.boolean() {

@@ -52,7 +52,7 @@ func New(opts Options) *mcp.Server {
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "build_playground_url",
-		Description: `Build a monedula.dev kafka-simulator free-play playground URL from a declarative description: an optional cluster topology + shape (brokers, topics) and an ordered list of timed actions (produce records, kill/restart brokers, add producers/consumer groups/share groups, whitelisted config changes, partition reassignment, replication-factor changes, tiered-storage offload, replica throttling).
+		Description: `Build a monedula.dev kafka-simulator free-play playground URL from a declarative description: an optional cluster topology + shape (brokers, topics, an optional Schema Registry) and an ordered list of timed actions (produce records, kill/restart brokers, add producers/consumer groups/share groups, whitelisted config changes, partition reassignment, replication-factor changes, tiered-storage offload, replica throttling, and - v2.2 preview - Schema Registry failures: kill/restart an SR instance, SR failover, SR leader eligibility, restarting a producer with an empty schema cache or the next schema version).
 
 The link opens a live, animated sandbox that replays the actions on the described cluster. Every input is validated against the playground's URL grammar before a URL is returned (the playground itself silently DROPS anything malformed, so validation errors here name the offending field instead). The response echoes the action list decoded back out of the generated URL — confirm it matches your intent.
 
@@ -89,7 +89,7 @@ Returns the URL, the size param, the real→simulator broker/topic name tables, 
 // BuildPlaygroundURLInput describes the free-play session to encode.
 type BuildPlaygroundURLInput struct {
 	Cluster string        `json:"cluster,omitempty" jsonschema:"free-play topology: single-dc (default), active-passive, active-active, stretched-2-5, stretched-3, or diskless-3az (v2.0+, KIP-1163 draft)"`
-	Shape   *ClusterShape `json:"shape,omitempty" jsonschema:"starting cluster shape (brokers, topics). Omit for the topology default. Not supported for stretched-2-5"`
+	Shape   *ClusterShape `json:"shape,omitempty" jsonschema:"starting cluster shape (brokers, topics, Schema Registry). Omit for the topology default. Not supported for stretched-2-5"`
 	Actions []ActionInput `json:"actions,omitempty" jsonschema:"ordered list of timed actions to replay on the starting cluster (may be empty to just open the cluster)"`
 }
 
