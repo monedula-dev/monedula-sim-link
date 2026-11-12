@@ -11,14 +11,14 @@ import (
 // shape is echoed back by the tools after the URL self-decode, so a caller can
 // diff intent against what the playground will load.
 type ActionInput struct {
-	Kind string `json:"kind" jsonschema:"one of: produce, kill_broker, restart_broker, add_broker, remove_broker, add_producer, remove_producer, add_group, remove_group, add_consumer, add_share_group, config_change, reassign_partition, change_replication_factor, set_replica_speed, tier_offload"`
+	Kind string `json:"kind" jsonschema:"one of: produce, kill_broker, restart_broker, add_broker, remove_broker, add_producer, remove_producer, add_group, remove_group, add_consumer, add_share_group, config_change, reassign_partition, change_replication_factor, set_replica_speed, tier_offload, kill_sr, restart_sr, sr_failover, restart_producer, set_sr_eligibility"`
 	At   int    `json:"at" jsonschema:"simulation time in milliseconds at which the action fires; actions are replayed sorted by this value (>= 0). Space actions ~1000ms apart so the playground animates them one at a time"`
 
 	BrokerID string `json:"brokerId,omitempty" jsonschema:"broker id, e.g. broker-2 (kill_broker, restart_broker, add_broker, remove_broker, set_replica_speed). The default free-play cluster names brokers broker-1..broker-N"`
 	Graceful bool   `json:"graceful,omitempty" jsonschema:"kill_broker only: true for a graceful shutdown, false/omitted for a hard kill"`
 	Rack     string `json:"rack,omitempty" jsonschema:"add_broker only: optional rack to pin placement"`
 
-	ProducerID string  `json:"producerId,omitempty" jsonschema:"producer id, e.g. p1 (produce, add_producer). The default free-play cluster starts with producer p1"`
+	ProducerID string  `json:"producerId,omitempty" jsonschema:"producer id, e.g. p1 (produce, add_producer, remove_producer, restart_producer). The default free-play cluster starts with producer p1"`
 	Topic      string  `json:"topic,omitempty" jsonschema:"topic name (produce, add_share_group, reassign_partition, change_replication_factor, tier_offload; optional per-topic pin for add_producer). The free-play primary topic is 'orders'"`
 	Key        *string `json:"key,omitempty" jsonschema:"produce only: optional record key; controls partition routing. Any text (reversibly escaped in the URL)"`
 	Value      *string `json:"value,omitempty" jsonschema:"produce: optional record value (any text; safely escaped). config_change: the new value, e.g. 'all' or '2' or 'compact,delete'"`
@@ -41,6 +41,14 @@ type ActionInput struct {
 	TargetReplicationFactor *int     `json:"targetReplicationFactor,omitempty" jsonschema:"change_replication_factor only: the new replication factor"`
 	ToOffset                *int     `json:"toOffset,omitempty" jsonschema:"tier_offload only: offload the local log up to this offset (exclusive) to remote storage"`
 	Slow                    *bool    `json:"slow,omitempty" jsonschema:"set_replica_speed only: true throttles the broker's follower replication, false restores full speed"`
+
+	// Schema Registry failure modelling (v2.2 preview). The instances exist
+	// only when the cluster has SR instances: shape.schemaRegistry with
+	// instancesPerDc >= 1.
+	InstanceID   string `json:"instanceId,omitempty" jsonschema:"v2.2 preview, Schema Registry instance id (kill_sr, restart_sr, set_sr_eligibility). Free-play instances are named sr-<dc>-<n>: sr-dc-1-1 on a single-zone cluster, sr-dc-a-1 on stretched-3, sr-primary-1 / sr-west-1 on the mirror topologies. They exist only when shape.schemaRegistry.instancesPerDc >= 1"`
+	DeploymentID string `json:"deploymentId,omitempty" jsonschema:"sr_failover only (v2.2 preview): the SR deployment that takes over writes; the free-play deployment is sr. A follower-only deployment on a mirrored _schemas topic fails over; any other deployment is a no-op"`
+	NewSchema    bool   `json:"newSchema,omitempty" jsonschema:"restart_producer only (v2.2 preview): true deploys the next schema version of the producer's subject with the restart; false/omitted restarts it with an empty schema cache only"`
+	Eligible     *bool  `json:"eligible,omitempty" jsonschema:"set_sr_eligibility only (v2.2 preview): leader.eligibility of the instance, true = may lead, false = follower-only"`
 }
 
 // GroupSettings is the JSON echo of actionlog.GroupSettings (the same fields,
@@ -209,10 +217,38 @@ func toEntry(i int, a ActionInput) (actionlog.Entry, error) {
 			return fail("missing required field \"toOffset\"")
 		}
 		action = actionlog.TierOffload{Topic: a.Topic, Partition: *a.Partition, ToOffset: *a.ToOffset}
+	case "kill_sr":
+		if err := need("instanceId", a.InstanceID); err != nil {
+			return actionlog.Entry{}, err
+		}
+		action = actionlog.KillSR{InstanceID: a.InstanceID}
+	case "restart_sr":
+		if err := need("instanceId", a.InstanceID); err != nil {
+			return actionlog.Entry{}, err
+		}
+		action = actionlog.RestartSR{InstanceID: a.InstanceID}
+	case "sr_failover":
+		if err := need("deploymentId", a.DeploymentID); err != nil {
+			return actionlog.Entry{}, err
+		}
+		action = actionlog.SRFailover{DeploymentID: a.DeploymentID}
+	case "restart_producer":
+		if err := need("producerId", a.ProducerID); err != nil {
+			return actionlog.Entry{}, err
+		}
+		action = actionlog.RestartProducer{ProducerID: a.ProducerID, NewSchema: a.NewSchema}
+	case "set_sr_eligibility":
+		if err := need("instanceId", a.InstanceID); err != nil {
+			return actionlog.Entry{}, err
+		}
+		if a.Eligible == nil {
+			return fail("missing required field \"eligible\" (true = may lead, false = follower-only)")
+		}
+		action = actionlog.SetSREligibility{InstanceID: a.InstanceID, Eligible: *a.Eligible}
 	case "":
 		return fail("missing required field \"kind\"")
 	default:
-		return fail("unknown kind; expected one of produce, kill_broker, restart_broker, add_broker, remove_broker, add_producer, remove_producer, add_group, remove_group, add_consumer, add_share_group, config_change, reassign_partition, change_replication_factor, set_replica_speed, tier_offload")
+		return fail("unknown kind; expected one of produce, kill_broker, restart_broker, add_broker, remove_broker, add_producer, remove_producer, add_group, remove_group, add_consumer, add_share_group, config_change, reassign_partition, change_replication_factor, set_replica_speed, tier_offload, kill_sr, restart_sr, sr_failover, restart_producer, set_sr_eligibility")
 	}
 
 	e := actionlog.Entry{At: a.At, Action: action}
@@ -330,6 +366,24 @@ func fromEntry(e actionlog.Entry) ActionInput {
 		out.Partition = &p
 		off := a.ToOffset
 		out.ToOffset = &off
+	case actionlog.KillSR:
+		out.Kind = "kill_sr"
+		out.InstanceID = a.InstanceID
+	case actionlog.RestartSR:
+		out.Kind = "restart_sr"
+		out.InstanceID = a.InstanceID
+	case actionlog.SRFailover:
+		out.Kind = "sr_failover"
+		out.DeploymentID = a.DeploymentID
+	case actionlog.RestartProducer:
+		out.Kind = "restart_producer"
+		out.ProducerID = a.ProducerID
+		out.NewSchema = a.NewSchema
+	case actionlog.SetSREligibility:
+		out.Kind = "set_sr_eligibility"
+		out.InstanceID = a.InstanceID
+		e := a.Eligible
+		out.Eligible = &e
 	}
 	return out
 }

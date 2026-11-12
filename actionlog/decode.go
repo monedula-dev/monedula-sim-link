@@ -44,6 +44,16 @@ func decodeAction(kind, payload string) (Action, error) {
 		return decodeTierOffload(payload)
 	case "EL":
 		return decodeElectPreferredLeaders(payload)
+	case "KSR":
+		return KillSR{InstanceID: payload}, nil
+	case "RSR":
+		return RestartSR{InstanceID: payload}, nil
+	case "SFO":
+		return SRFailover{DeploymentID: payload}, nil
+	case "RPR":
+		return decodeRestartProducer(payload)
+	case "SRE":
+		return decodeSetSREligibility(payload)
 	default:
 		return nil, fmt.Errorf("unsupported kind %q", kind)
 	}
@@ -395,4 +405,27 @@ func decodeTierOffload(payload string) (Action, error) {
 		return nil, fmt.Errorf("tier_offload: invalid toOffset %q", parts[2])
 	}
 	return TierOffload{Topic: parts[0], Partition: partition, ToOffset: toOffset}, nil
+}
+
+func decodeRestartProducer(payload string) (Action, error) {
+	// payload = "<producerId>" or "<producerId>:n". Mirrors the playground's
+	// decoder, which reads the second field as the new-schema flag only when it
+	// is "n" and ignores anything else after the producer id: "RPR:p1:x" loads
+	// as a plain restart, so it is not reported as dropped.
+	parts := strings.Split(payload, ":")
+	if parts[0] == "" {
+		return nil, fmt.Errorf("restart_producer: empty producer id in %q", payload)
+	}
+	return RestartProducer{ProducerID: parts[0], NewSchema: len(parts) > 1 && parts[1] == "n"}, nil
+}
+
+func decodeSetSREligibility(payload string) (Action, error) {
+	parts := strings.Split(payload, ":")
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("set_sr_eligibility: expected 2 fields in %q", payload)
+	}
+	if parts[0] == "" || (parts[1] != "0" && parts[1] != "1") {
+		return nil, fmt.Errorf("set_sr_eligibility: malformed payload %q", payload)
+	}
+	return SetSREligibility{InstanceID: parts[0], Eligible: parts[1] == "1"}, nil
 }

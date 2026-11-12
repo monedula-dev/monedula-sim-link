@@ -69,6 +69,13 @@ func TestRoundTripEachKind(t *testing.T) {
 		"tier_offload":         {{At: 100, Action: TierOffload{Topic: "orders", Partition: 0, ToOffset: 5}}},
 		"elect all":            {{At: 100, Action: ElectPreferredLeaders{}}},
 		"elect topic":          {{At: 100, Action: ElectPreferredLeaders{Topic: "orders"}}},
+		"kill_sr":              {{At: 100, Action: KillSR{InstanceID: "sr-dc-1-1"}}},
+		"restart_sr":           {{At: 100, Action: RestartSR{InstanceID: "sr-dc-a-2"}}},
+		"sr_failover":          {{At: 100, Action: SRFailover{DeploymentID: "sr"}}},
+		"restart_producer":     {{At: 100, Action: RestartProducer{ProducerID: "p1"}}},
+		"restart_producer new": {{At: 100, Action: RestartProducer{ProducerID: "p1", NewSchema: true}}},
+		"set_sr_eligibility 1": {{At: 100, Action: SetSREligibility{InstanceID: "sr-dc-b-1", Eligible: true}}},
+		"set_sr_eligibility 0": {{At: 100, Action: SetSREligibility{InstanceID: "sr-dc-b-1"}}},
 	}
 	for name, entries := range cases {
 		t.Run(name, func(t *testing.T) { roundTrip(t, entries) })
@@ -232,15 +239,20 @@ func TestConfigWhitelistRejectsUnknown(t *testing.T) {
 // inputs the tolerant playground decoder would silently drop.
 func TestDecodeRejectsMalformed(t *testing.T) {
 	bad := []string{
-		"AB:1",             // no @at
-		"AB:1@08500",       // non-canonical at
-		"AB:1@1e3",         // non-canonical at
-		"ZZ:1@100",         // unknown kind
-		"K@100",            // no kind separator
-		"K:@100",           // empty payload
-		"SR:1:2@100",       // bad speed code
-		"RA:orders:0@100",  // wrong arity
-		"C:bad.path:x@100", // non-whitelisted config
+		"AB:1",                // no @at
+		"AB:1@08500",          // non-canonical at
+		"AB:1@1e3",            // non-canonical at
+		"ZZ:1@100",            // unknown kind
+		"K@100",               // no kind separator
+		"K:@100",              // empty payload
+		"SR:1:2@100",          // bad speed code
+		"RA:orders:0@100",     // wrong arity
+		"C:bad.path:x@100",    // non-whitelisted config
+		"KSR:@100",            // empty sr instance id
+		"RPR::n@100",          // empty producer id
+		"SRE:sr-dc-1-1@100",   // missing eligibility flag
+		"SRE:sr-dc-1-1:2@100", // bad eligibility flag
+		"SRE::1@100",          // empty sr instance id
 	}
 	for _, raw := range bad {
 		if _, err := Decode(raw); err == nil {
@@ -264,7 +276,7 @@ func TestPropertyRoundTrip(t *testing.T) {
 
 func randomAction(rng *rand.Rand) Action {
 	id := func(prefix string) string { return prefix + string(rune('a'+rng.Intn(6))) }
-	switch rng.Intn(12) {
+	switch rng.Intn(13) {
 	case 0:
 		return AddBroker{BrokerID: id("b"), Rack: pick(rng, "", id("rack"))}
 	case 1:
@@ -287,6 +299,11 @@ func randomAction(rng *rand.Rand) Action {
 		return ConfigChange{Path: "producers." + id("p") + ".config.acks", Value: pick(rng, "0", "1", "all")}
 	case 10:
 		return AddConsumer{GroupID: id("g"), MemberID: id("c")}
+	case 11:
+		return pickAction(rng,
+			KillSR{InstanceID: id("sr")}, RestartSR{InstanceID: id("sr")}, SRFailover{DeploymentID: id("sr")},
+			RestartProducer{ProducerID: id("p"), NewSchema: rng.Intn(2) == 0},
+			SetSREligibility{InstanceID: id("sr"), Eligible: rng.Intn(2) == 0})
 	default:
 		return produceRandom(rng, id)
 	}
@@ -340,3 +357,63 @@ func randMembers(rng *rand.Rand) []string {
 }
 
 func pick(rng *rand.Rand, opts ...string) string { return opts[rng.Intn(len(opts))] }
+
+func pickAction(rng *rand.Rand, opts ...Action) Action { return opts[rng.Intn(len(opts))] }
+
+// TestSRWire pins the Schema Registry kinds (v2.2 preview) to the playground's
+// own encoder output (actionLog.ts encodeOne): KSR/RSR/SFO carry the bare id,
+// RPR appends ":n" only for a new schema, SRE ends in "1" or "0".
+func TestSRWire(t *testing.T) {
+	cases := []struct {
+		entry Entry
+		want  string
+	}{
+		{Entry{At: 0, Action: KillSR{InstanceID: "sr-dc-1-1"}}, "KSR:sr-dc-1-1@0"},
+		{Entry{At: 1000, Action: RestartSR{InstanceID: "sr-dc-1-1"}}, "RSR:sr-dc-1-1@1000"},
+		{Entry{At: 2000, Action: SRFailover{DeploymentID: "sr"}}, "SFO:sr@2000"},
+		{Entry{At: 3000, Action: RestartProducer{ProducerID: "p1"}}, "RPR:p1@3000"},
+		{Entry{At: 4000, Action: RestartProducer{ProducerID: "p1", NewSchema: true}}, "RPR:p1:n@4000"},
+		{Entry{At: 5000, Action: SetSREligibility{InstanceID: "sr-dc-c-1", Eligible: true}}, "SRE:sr-dc-c-1:1@5000"},
+		{Entry{At: 6000, Action: SetSREligibility{InstanceID: "sr-dc-c-1"}}, "SRE:sr-dc-c-1:0@6000"},
+	}
+	for _, c := range cases {
+		got, err := EncodeEntry(c.entry)
+		if err != nil {
+			t.Fatalf("EncodeEntry(%#v): %v", c.entry.Action, err)
+		}
+		if got != c.want {
+			t.Errorf("EncodeEntry(%#v) = %q, want %q", c.entry.Action, got, c.want)
+		}
+		back, err := Decode(c.want)
+		if err != nil {
+			t.Fatalf("Decode(%q): %v", c.want, err)
+		}
+		if len(back) != 1 || back[0] != c.entry {
+			t.Errorf("Decode(%q) = %#v, want %#v", c.want, back, c.entry)
+		}
+	}
+	for _, a := range []Action{KillSR{InstanceID: "a:b"}, RestartSR{}, SRFailover{DeploymentID: "s,r"}, RestartProducer{ProducerID: "p@1"}, SetSREligibility{InstanceID: "sr.1"}} {
+		if _, err := EncodeEntry(Entry{At: 0, Action: a}); err == nil {
+			t.Errorf("EncodeEntry(%#v): expected a validation error", a)
+		}
+	}
+}
+
+// TestRestartProducerDecodesLikePlayground: the playground reads the RPR
+// flag only when it is "n" and ignores the rest, so these load (and preview)
+// as restarts rather than drops; they re-encode to the canonical form.
+func TestRestartProducerDecodesLikePlayground(t *testing.T) {
+	for raw, want := range map[string]RestartProducer{
+		"RPR:p1:x@100":   {ProducerID: "p1"},
+		"RPR:p1:@100":    {ProducerID: "p1"},
+		"RPR:p1:n:z@100": {ProducerID: "p1", NewSchema: true},
+	} {
+		got, err := Decode(raw)
+		if err != nil {
+			t.Fatalf("Decode(%q): %v", raw, err)
+		}
+		if len(got) != 1 || got[0].Action != want {
+			t.Errorf("Decode(%q) = %#v, want %#v", raw, got, want)
+		}
+	}
+}

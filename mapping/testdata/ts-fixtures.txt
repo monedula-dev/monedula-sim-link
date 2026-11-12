@@ -6,6 +6,10 @@
 #   HASH <key> <partitionCount> <partition>
 #     = src/sim/producer.ts partitionForKey()
 #   SIZE lines were used to pin mapping/size.go's slug fixtures (see size_test.go).
+#   SIZE-SR <type> <slug> => <json deployment/instance ids, (f) = follower-only> :: <json size>
+#     (2026-11-11, v2.2 preview) = encodeFreePlaySize on clampFreePlaySize'd sizes with
+#     schemaRegistry + srInstancesPerDc/srFollowerOnlyDcs, each a decode/encode fixed
+#     point, and the SR instances createCluster builds from that slug.
 #   The 2026-09-23 SIZE lines (KIP-1163 draft diskless.enable, v2.0+)
 #   were generated the same way, via decodeFreePlaySize/encodeFreePlaySize
 #   round-tripped on hand-built FreePlaySize objects (not hand-crafted slugs).
@@ -185,3 +189,11 @@ SIZE 5x4x3xxxxxxxxxxx2~d~3600000~2000000~ => 5x4x3xxxxxxxxxxx~~3600000~2000000~ 
 SIZE 5x4x3xxxxxxxxxxx~~~2000000~ => 5x4x3xxxxxxxxxxx~~~2000000~ :: {"brokersPerZone":[5],"partitions":4,"replicationFactor":3,"primaryRetentionBytes":2000000}
 SIZE 6x3x3xevents~2~2~1~d~~100~~xxxxxxxxxx2~d~~~ => 6x3x3xevents~2~2~1~d~~100~~ :: {"brokersPerZone":[6],"partitions":3,"replicationFactor":3,"extraTopics":[{"name":"events","partitions":2,"replicationFactor":2,"minInSyncReplicas":1,"cleanupPolicy":"delete","retentionBytes":100}]}
 SIZE 6x3x3xevents~2~2~1~d~~100~~ => 6x3x3xevents~2~2~1~d~~100~~ :: {"brokersPerZone":[6],"partitions":3,"replicationFactor":3,"extraTopics":[{"name":"events","partitions":2,"replicationFactor":2,"minInSyncReplicas":1,"cleanupPolicy":"delete","retentionBytes":100}]}
+SIZE-SR single-dc 3x3x3xxxxxxxxxxxxxxx1 => [] :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":3,"schemaRegistry":true}
+SIZE-SR single-dc 3x3x3xxxxxxxxxxxxxxx2 => ["sr/sr-dc-1-1"] :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":3,"schemaRegistry":true,"srInstancesPerDc":1}
+SIZE-SR single-dc 4x3x3xxxxxxxxxxxxxxx4 => ["sr/sr-dc-1-1","sr/sr-dc-1-2","sr/sr-dc-1-3"] :: {"brokersPerZone":[4],"partitions":3,"replicationFactor":3,"schemaRegistry":true,"srInstancesPerDc":3}
+SIZE-SR stretched-3 1-1-1x3x3xxxxxxxxxxxxxxx3r1 => ["sr/sr-dc-a-1","sr/sr-dc-a-2","sr/sr-dc-b-1(f)","sr/sr-dc-b-2(f)","sr/sr-dc-c-1","sr/sr-dc-c-2"] :: {"brokersPerZone":[1,1,1],"partitions":3,"replicationFactor":3,"schemaRegistry":true,"srInstancesPerDc":2,"srFollowerOnlyDcs":[1]}
+SIZE-SR stretched-3 2-2-2x3x3xxxxxxxxxxxxxxx2r02 => ["sr/sr-dc-a-1(f)","sr/sr-dc-b-1","sr/sr-dc-c-1(f)"] :: {"brokersPerZone":[2,2,2],"partitions":3,"replicationFactor":3,"schemaRegistry":true,"srInstancesPerDc":1,"srFollowerOnlyDcs":[0,2]}
+SIZE-SR active-passive 2-2x1x2xxxxxxxxxxxxxxx2r1 => ["sr/sr-primary-1","sr/sr-dr-1(f)"] :: {"brokersPerZone":[2,2],"partitions":1,"replicationFactor":2,"schemaRegistry":true,"srInstancesPerDc":1,"srFollowerOnlyDcs":[1]}
+SIZE-SR active-active 3-2x1x2xxxxxxxxxxxxxxx3 => ["sr/sr-west-1","sr/sr-west-2","sr/sr-east-1","sr/sr-east-2"] :: {"brokersPerZone":[3,2],"partitions":1,"replicationFactor":2,"schemaRegistry":true,"srInstancesPerDc":2}
+SIZE-SR diskless-3az 6x3x3xxxxxxxxxxxxxxx2 => ["sr/sr-dc-1-1"] :: {"brokersPerZone":[6],"partitions":3,"replicationFactor":3,"schemaRegistry":true,"srInstancesPerDc":1}

@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -30,6 +31,19 @@ type ClusterShape struct {
 	// (validateDisklessTiming); rejected otherwise, mirroring the TS store's
 	// "kept only when some topic is diskless" rule.
 	DisklessTiming *DisklessTimingShape `json:"disklessTiming,omitempty" jsonschema:"optional KIP-1163 draft diskless timing override (v2.0+); requires a diskless topic (disklessEnable, or the diskless-3az preset)"`
+	// SchemaRegistry turns the session's schema registry on (size tail index
+	// 14). Mirrors FreePlaySize.schemaRegistry / srInstancesPerDc /
+	// srFollowerOnlyDcs in freePlayTopologies.ts.
+	SchemaRegistry *SchemaRegistryShape `json:"schemaRegistry,omitempty" jsonschema:"optional Schema Registry for the session: a <topic>-value subject per topic, seeded at v1 with backward compatibility. Present ({}) = the registry with no SR instances; instancesPerDc (v2.2 preview) adds SR instances the SR actions (kill_sr, restart_sr, set_sr_eligibility, sr_failover) act on"`
+}
+
+// SchemaRegistryShape is the free-play schema registry. With no instances it
+// is the abstract registry (subjects and compatibility only, size segment
+// "1"); v2.2 preview: 1-3 SR instances in every DC (segment "2"-"4"),
+// optionally with follower-only DCs ("r" + their indexes).
+type SchemaRegistryShape struct {
+	InstancesPerDc  int   `json:"instancesPerDc,omitempty" jsonschema:"v2.2 preview: SR instances in every DC, 1-3, named sr-<dc>-<n> in one deployment named sr; every producer and consumer group then serializes through SR with a warm schema cache. 0/omitted = the abstract registry with no instances"`
+	FollowerOnlyDcs []int `json:"followerOnlyDcs,omitempty" jsonschema:"v2.2 preview: indexes (0-based, topology zone order: brokersPerZone order) of the DCs whose SR instances are follower-only (leader.eligibility=false). Needs instancesPerDc >= 1"`
 }
 
 // DisklessTimingShape is the editable diskless timing (ms), mirroring
@@ -275,8 +289,15 @@ func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam
 		return "", "", nil, fmt.Errorf("shape.disklessTiming: %w", err)
 	}
 
+	// --- schema registry --------------------------------------------------
+	srEnc, srNotes, err := encodeSchemaRegistry(topo, shape.SchemaRegistry)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("shape.schemaRegistry: %w", err)
+	}
+	notes = append(notes, srNotes...)
+
 	// The tail is positional (§11.3): index 0 extraTopics, 3 rackAware,
-	// 10 primary-topic config, and - KIP-1163 draft, v2.0+ -
+	// 10 primary-topic config, 14 schemaRegistry, and - KIP-1163 draft, v2.0+ -
 	// 17 the primary diskless flag + diskless timing. Emit the shortest
 	// accepted tail length that carries the highest present index.
 	tail := map[int]string{}
@@ -294,6 +315,9 @@ func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam
 		if chunk := primaryConfigChunk(*primary); chunk != "" {
 			tail[10] = chunk
 		}
+	}
+	if srEnc != "" {
+		tail[14] = srEnc
 	}
 	var commitMs, uploadMs *int
 	if shape.DisklessTiming != nil {
@@ -491,4 +515,76 @@ func primaryConfigChunk(t TopicShape) string {
 		minISR = *t.MinInSyncReplicas
 	}
 	return mapping.EncodePrimaryConfigTail(t.ReplicationFactor, minISR, t.CleanupPolicy, nil, nil)
+}
+
+// maxSRInstancesPerDc is clampSr's upper bound in freePlayTopologies.ts.
+const maxSRInstancesPerDc = 3
+
+// encodeSchemaRegistry renders size tail index 14 (§11.3) the way
+// encodeFreePlaySize does: "" without a registry, "1" for the abstract
+// registry, and - v2.2 preview - "<instancesPerDc+1>" followed by "r" and the
+// sorted follower-only DC indexes. It validates instead of clamping, so a link
+// never silently loses a field: the playground would clamp the instance count
+// to 0-3 and drop follower-only DCs without instances, and an index past the
+// topology's DCs would be a silent no-op.
+func encodeSchemaRegistry(topo topology, sr *SchemaRegistryShape) (string, []string, error) {
+	if sr == nil {
+		return "", nil, nil
+	}
+	if sr.InstancesPerDc < 0 || sr.InstancesPerDc > maxSRInstancesPerDc {
+		return "", nil, fmt.Errorf("instancesPerDc %d must be within 0..%d (v2.2 preview)", sr.InstancesPerDc, maxSRInstancesPerDc)
+	}
+	if sr.InstancesPerDc == 0 {
+		if len(sr.FollowerOnlyDcs) > 0 {
+			return "", nil, fmt.Errorf("followerOnlyDcs needs instancesPerDc >= 1 (the abstract registry has no instances)")
+		}
+		return "1", nil, nil
+	}
+	dcs := len(topo.zones)
+	seen := map[int]bool{}
+	for _, i := range sr.FollowerOnlyDcs {
+		if i < 0 || i >= dcs {
+			return "", nil, fmt.Errorf("followerOnlyDcs index %d is out of range: cluster %q has %d DC(s) (%s), indexes 0..%d", i, topo.slug, dcs, strings.Join(topo.zones, ", "), dcs-1)
+		}
+		if seen[i] {
+			return "", nil, fmt.Errorf("followerOnlyDcs index %d is listed twice", i)
+		}
+		seen[i] = true
+	}
+	enc := strconv.Itoa(sr.InstancesPerDc + 1)
+	notes := []string{"schemaRegistry: SR deployment sr with instances " + strings.Join(srInstanceIDs(topo, sr.InstancesPerDc), ", ") + " (v2.2 preview)"}
+	if len(seen) > 0 {
+		idx := make([]int, 0, len(seen))
+		for i := range seen {
+			idx = append(idx, i)
+		}
+		sort.Ints(idx)
+		var b strings.Builder
+		b.WriteString("r")
+		for _, i := range idx {
+			b.WriteString(strconv.Itoa(i))
+		}
+		enc += b.String()
+		if len(idx) == dcs {
+			notes = append(notes, "schemaRegistry: every DC is follower-only, so no SR instance can lead and the registry takes no writes until set_sr_eligibility makes one eligible")
+		}
+	}
+	return enc, notes, nil
+}
+
+// srInstanceIDs lists the SR instance ids the playground builds for a
+// topology (addSrInstances in freePlayTopologies.ts): sr-<dc>-<n> per DC in
+// zone order, where a single-zone topology's one DC is named dc-1.
+func srInstanceIDs(topo topology, perDc int) []string {
+	dcs := topo.zones
+	if len(dcs) == 1 {
+		dcs = []string{"dc-1"}
+	}
+	ids := make([]string, 0, len(dcs)*perDc)
+	for _, dc := range dcs {
+		for k := 1; k <= perDc; k++ {
+			ids = append(ids, "sr-"+dc+"-"+strconv.Itoa(k))
+		}
+	}
+	return ids
 }

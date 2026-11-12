@@ -503,3 +503,93 @@ func TestBaseURLOverride(t *testing.T) {
 		t.Errorf("URL: got %q want %q", out.URL, want)
 	}
 }
+
+// TestBuildURLSchemaRegistryFailures builds a v2.2-preview Schema Registry
+// failure session end to end: stretched-3 with 2 SR instances per DC (the
+// second DC follower-only, size segment 14 = "3r1") and each SR action kind,
+// and checks the URL carries the playground's own codes and echoes them back.
+func TestBuildURLSchemaRegistryFailures(t *testing.T) {
+	s := newSession(t)
+	res := callTool(t, s, "build_playground_url", map[string]any{
+		"cluster": "stretched-3",
+		"shape": map[string]any{
+			"brokersPerZone": []int{1, 1, 1},
+			"schemaRegistry": map[string]any{"instancesPerDc": 2, "followerOnlyDcs": []int{1}},
+		},
+		"actions": []map[string]any{
+			{"kind": "kill_sr", "at": 1000, "instanceId": "sr-dc-a-1"},
+			{"kind": "restart_producer", "at": 2000, "producerId": "p1", "newSchema": true},
+			{"kind": "set_sr_eligibility", "at": 3000, "instanceId": "sr-dc-b-1", "eligible": true},
+			{"kind": "restart_sr", "at": 4000, "instanceId": "sr-dc-a-1"},
+			{"kind": "set_sr_eligibility", "at": 5000, "instanceId": "sr-dc-b-1", "eligible": false},
+			{"kind": "sr_failover", "at": 6000, "deploymentId": "sr"},
+			{"kind": "restart_producer", "at": 7000, "producerId": "p1"},
+		},
+	})
+	var out BuildPlaygroundURLOutput
+	structured(t, res, &out)
+	if out.Cluster != "stretched-3" || out.Size != "1-1-1x3x3xxxxxxxxxxxxxxx3r1" {
+		t.Errorf("cluster %q size %q, want stretched-3 / 1-1-1x3x3xxxxxxxxxxxxxxx3r1", out.Cluster, out.Size)
+	}
+	const want = "KSR:sr-dc-a-1@1000,RPR:p1:n@2000,SRE:sr-dc-b-1:1@3000,RSR:sr-dc-a-1@4000,SRE:sr-dc-b-1:0@5000,SFO:sr@6000,RPR:p1@7000"
+	if got := actionsParamOf(t, out.URL); got != want {
+		t.Errorf("URL actions param:\n  got  %q\n  want %q", got, want)
+	}
+	kinds := make([]string, len(out.DecodedActions))
+	for i, a := range out.DecodedActions {
+		kinds[i] = a.Kind
+	}
+	if got := strings.Join(kinds, ","); got != "kill_sr,restart_producer,set_sr_eligibility,restart_sr,set_sr_eligibility,sr_failover,restart_producer" {
+		t.Errorf("echoed kinds = %s", got)
+	}
+	if a := out.DecodedActions[1]; !a.NewSchema || a.ProducerID != "p1" {
+		t.Errorf("restart_producer echo = %+v, want p1 with newSchema", a)
+	}
+	if a := out.DecodedActions[4]; a.Eligible == nil || *a.Eligible || a.InstanceID != "sr-dc-b-1" {
+		t.Errorf("set_sr_eligibility echo = %+v, want sr-dc-b-1 not eligible", a)
+	}
+	if a := out.DecodedActions[5]; a.DeploymentID != "sr" {
+		t.Errorf("sr_failover echo = %+v, want deployment sr", a)
+	}
+	if !strings.Contains(strings.Join(out.Notes, "\n"), "sr-dc-a-1, sr-dc-a-2, sr-dc-b-1, sr-dc-b-2, sr-dc-c-1, sr-dc-c-2") {
+		t.Errorf("notes %q do not list the SR instances", out.Notes)
+	}
+
+	for _, c := range []struct {
+		name    string
+		action  map[string]any
+		needles []string
+	}{
+		{"kill_sr no instance", map[string]any{"kind": "kill_sr", "at": 0}, []string{"actions[0]", "kill_sr", "instanceId"}},
+		{"restart_sr no instance", map[string]any{"kind": "restart_sr", "at": 0}, []string{"restart_sr", "instanceId"}},
+		{"sr_failover no deployment", map[string]any{"kind": "sr_failover", "at": 0}, []string{"sr_failover", "deploymentId"}},
+		{"restart_producer no producer", map[string]any{"kind": "restart_producer", "at": 0}, []string{"restart_producer", "producerId"}},
+		{"set_sr_eligibility no flag", map[string]any{"kind": "set_sr_eligibility", "at": 0, "instanceId": "sr-dc-1-1"}, []string{"set_sr_eligibility", "eligible"}},
+		{"kill_sr separator", map[string]any{"kind": "kill_sr", "at": 0, "instanceId": "sr:1"}, []string{"kill_sr", "reserved separator"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			wantToolError(t, callTool(t, s, "build_playground_url", map[string]any{"actions": []map[string]any{c.action}}), c.needles...)
+		})
+	}
+	wantToolError(t, callTool(t, s, "build_playground_url", map[string]any{
+		"shape": map[string]any{"schemaRegistry": map[string]any{"instancesPerDc": 4}},
+	}), "shape.schemaRegistry", "instancesPerDc 4")
+}
+
+// TestValidateActionsSchemaRegistry: a playground-written SR log previews with
+// nothing dropped, a malformed SRE flag is reported, and an RPR with an
+// unknown flag previews as the plain restart the playground loads.
+func TestValidateActionsSchemaRegistry(t *testing.T) {
+	s := newSession(t)
+	res := callTool(t, s, "validate_actions", map[string]any{
+		"actions": "KSR:sr-dc-1-1@1000,RSR:sr-dc-1-1@2000,SFO:sr@3000,RPR:p1@4000,RPR:p1:n@5000,SRE:sr-dc-1-1:0@6000,SRE:sr-dc-1-1:2@7000,RPR:p1:x@8000",
+	})
+	var out ValidateActionsOutput
+	structured(t, res, &out)
+	if len(out.Entries) != 7 || len(out.Dropped) != 1 || !strings.HasPrefix(out.Dropped[0].Entry, "SRE:sr-dc-1-1:2") {
+		t.Fatalf("entries %d dropped %+v, want 7 kept and the SRE flag 2 dropped", len(out.Entries), out.Dropped)
+	}
+	if last := out.Entries[6]; last.Kind != "restart_producer" || last.NewSchema {
+		t.Errorf("RPR:p1:x previewed as %+v, want a plain restart_producer", last)
+	}
+}

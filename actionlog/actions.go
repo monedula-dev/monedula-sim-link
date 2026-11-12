@@ -638,3 +638,93 @@ func escapeProduceKey(v string) string {
 func unescapeProduceKey(v string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(v, "~c", ","), "~s", ":"), "~t", "~")
 }
+
+// --- Schema Registry failure modelling (v2.2 preview) ---------------------
+//
+// These five kinds act on the SR instances a free-play session gets from the
+// schemaRegistry size segment ("2"-"4", §11.3 index 14) or a scenario's SR
+// deployment. Instances are named sr-<dc>-<n> (a single-zone free-play cluster
+// names its one DC dc-1, so sr-dc-1-1); the free-play deployment is "sr".
+
+// KillSR stops one Schema Registry instance (KSR). The SR leader is re-elected
+// on the same step.
+type KillSR struct {
+	InstanceID string
+}
+
+func (KillSR) isAction()    {}
+func (KillSR) kind() string { return "KSR" }
+func (a KillSR) payload() (string, error) {
+	if err := validateRawField("sr instance id", a.InstanceID); err != nil {
+		return "", err
+	}
+	return a.InstanceID, nil
+}
+
+// RestartSR brings a stopped Schema Registry instance back (RSR).
+type RestartSR struct {
+	InstanceID string
+}
+
+func (RestartSR) isAction()    {}
+func (RestartSR) kind() string { return "RSR" }
+func (a RestartSR) payload() (string, error) {
+	if err := validateRawField("sr instance id", a.InstanceID); err != nil {
+		return "", err
+	}
+	return a.InstanceID, nil
+}
+
+// SRFailover fails a follower-only SR deployment on a mirrored _schemas topic
+// over to take writes (SFO). A no-op for any other deployment.
+type SRFailover struct {
+	DeploymentID string
+}
+
+func (SRFailover) isAction()    {}
+func (SRFailover) kind() string { return "SFO" }
+func (a SRFailover) payload() (string, error) {
+	if err := validateRawField("sr deployment id", a.DeploymentID); err != nil {
+		return "", err
+	}
+	return a.DeploymentID, nil
+}
+
+// RestartProducer restarts a producer with an empty schema cache (RPR).
+// NewSchema appends ":n": the restart deploys the next schema version of the
+// producer's subject.
+type RestartProducer struct {
+	ProducerID string
+	NewSchema  bool
+}
+
+func (RestartProducer) isAction()    {}
+func (RestartProducer) kind() string { return "RPR" }
+func (a RestartProducer) payload() (string, error) {
+	if err := validateRawField("producer id", a.ProducerID); err != nil {
+		return "", err
+	}
+	if a.NewSchema {
+		return a.ProducerID + ":n", nil
+	}
+	return a.ProducerID, nil
+}
+
+// SetSREligibility sets leader.eligibility of one SR instance (SRE):
+// Eligible=true ⇒ "1" (may lead), false ⇒ "0" (follower-only).
+type SetSREligibility struct {
+	InstanceID string
+	Eligible   bool
+}
+
+func (SetSREligibility) isAction()    {}
+func (SetSREligibility) kind() string { return "SRE" }
+func (a SetSREligibility) payload() (string, error) {
+	if err := validateRawField("sr instance id", a.InstanceID); err != nil {
+		return "", err
+	}
+	if a.Eligible {
+		return a.InstanceID + ":1", nil
+	}
+	return a.InstanceID + ":0", nil
+}
