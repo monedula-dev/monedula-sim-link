@@ -6,7 +6,9 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -92,12 +94,45 @@ func Connect(cfg ConnectConfig) (*Client, error) {
 // Close releases the connection.
 func (c *Client) Close() { c.kc.Close() }
 
+// maxPEMFileSize caps a TLS file read. Real CA bundles are well under 1 MiB.
+const maxPEMFileSize = 1 << 20
+
+// readPEMFile reads a TLS file named by the operator (a CLI or `mcp` server
+// flag, never an MCP tool argument). It accepts only a regular file of at most
+// maxPEMFileSize bytes, so a device or FIFO cannot hang or flood the read.
+func readPEMFile(flagName, path string) ([]byte, error) {
+	clean := filepath.Clean(path)
+	info, err := os.Stat(clean)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", flagName, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("read %s: %s is not a regular file", flagName, clean)
+	}
+	if info.Size() > maxPEMFileSize {
+		return nil, fmt.Errorf("read %s: %s is larger than %d bytes", flagName, clean, maxPEMFileSize)
+	}
+	f, err := os.Open(clean)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", flagName, err)
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxPEMFileSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", flagName, err)
+	}
+	if len(data) > maxPEMFileSize {
+		return nil, fmt.Errorf("read %s: %s is larger than %d bytes", flagName, clean, maxPEMFileSize)
+	}
+	return data, nil
+}
+
 func buildTLS(cfg *TLSConfig) (*tls.Config, error) {
 	tc := &tls.Config{MinVersion: tls.VersionTLS12}
 	if cfg.CACert != "" {
-		pem, err := os.ReadFile(cfg.CACert)
+		pem, err := readPEMFile("--ca-cert", cfg.CACert)
 		if err != nil {
-			return nil, fmt.Errorf("read --ca-cert: %w", err)
+			return nil, err
 		}
 		pool, err := x509.SystemCertPool()
 		if err != nil {
@@ -112,7 +147,15 @@ func buildTLS(cfg *TLSConfig) (*tls.Config, error) {
 		if cfg.ClientCert == "" || cfg.ClientKey == "" {
 			return nil, fmt.Errorf("--client-cert and --client-key must be given together")
 		}
-		cert, err := tls.LoadX509KeyPair(cfg.ClientCert, cfg.ClientKey)
+		certPEM, err := readPEMFile("--client-cert", cfg.ClientCert)
+		if err != nil {
+			return nil, err
+		}
+		keyPEM, err := readPEMFile("--client-key", cfg.ClientKey)
+		if err != nil {
+			return nil, err
+		}
+		cert, err := tls.X509KeyPair(certPEM, keyPEM)
 		if err != nil {
 			return nil, fmt.Errorf("load client certificate: %w", err)
 		}

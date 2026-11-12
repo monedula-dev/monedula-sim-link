@@ -43,6 +43,16 @@ Add `--dry-run` to see the cluster shape, the real-to-simulator name tables and 
 claude mcp add monedula-sim-link -- monedula-sim-link mcp
 ```
 
+The model that drives an MCP client picks the tool arguments, and text it reads can steer it. So credentials stay with the server, set where you register it:
+
+- `--ca-cert`, `--client-cert` and `--client-key` are flags of `mcp`, never tool arguments, and turn TLS on for every `cluster_to_url` call.
+- `--allowed-brokers host:port,...` limits `cluster_to_url` to those bootstrap brokers. The client certificate needs it, and the `MONEDULA_SIM_LINK_PASSWORD` password is only sent to brokers on it.
+
+```bash
+claude mcp add monedula-sim-link -e MONEDULA_SIM_LINK_PASSWORD=... -- \
+  monedula-sim-link mcp --ca-cert /path/ca.pem --allowed-brokers kafka-1:9093,kafka-2:9093
+```
+
 ## Building and testing
 
 With Go 1.26 or newer:

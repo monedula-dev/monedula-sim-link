@@ -137,7 +137,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "demo":
 		return runDemo(args[1:], stdout, stderr)
 	case "mcp":
-		return runMCP(args[1:])
+		return runMCP(args[1:], stderr)
 	case "version", "--version":
 		fmt.Fprintln(stdout, "monedula-sim-link", buildVersion())
 		return 0
@@ -286,17 +286,38 @@ func sortedMapLines(m map[string]string) []string {
 	return out
 }
 
+// splitList splits a comma-separated flag value, dropping blanks.
+func splitList(s string) []string {
+	var out []string
+	for _, v := range strings.Split(s, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 // runMCP serves MCP over stdio until the client disconnects. Logs go to
 // stderr; stdout carries only the protocol stream.
-func runMCP(args []string) int {
+func runMCP(args []string, stderr io.Writer) int {
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
 	baseURL := fs.String("base-url", simurl.DefaultBaseURL, "playground base URL used in every generated link")
+	var sec mcpserver.Security
+	fs.StringVar(&sec.CACert, "ca-cert", "", "PEM CA certificate file cluster_to_url trusts (turns TLS on for every call)")
+	fs.StringVar(&sec.ClientCert, "client-cert", "", "PEM client certificate for mTLS (needs --client-key and --allowed-brokers)")
+	fs.StringVar(&sec.ClientKey, "client-key", "", "PEM client key for mTLS")
+	allowed := fs.String("allowed-brokers", "", "comma-separated bootstrap brokers (host:port) cluster_to_url may connect to; the client certificate and the "+emit.PasswordEnvVar+" password are only used for these")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	srv := mcpserver.New(mcpserver.Options{BaseURL: *baseURL})
+	sec.AllowedBrokers = splitList(*allowed)
+	if err := sec.Validate(); err != nil {
+		fmt.Fprintf(stderr, "mcp: %v\n", err)
+		return 2
+	}
+	srv := mcpserver.New(mcpserver.Options{BaseURL: *baseURL, Security: sec})
 	if err := srv.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
-		fmt.Fprintf(os.Stderr, "mcp server: %v\n", err)
+		fmt.Fprintf(stderr, "mcp server: %v\n", err)
 		return 1
 	}
 	return 0

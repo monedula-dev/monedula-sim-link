@@ -33,6 +33,9 @@ type Options struct {
 	// BaseURL overrides the playground endpoint in every generated link
 	// (default simurl.DefaultBaseURL).
 	BaseURL string
+	// Security is the cluster_to_url connection policy: server-side TLS files
+	// and the broker allow-list for server-held credentials.
+	Security Security
 }
 
 // New assembles the MCP server with all tools registered. Run it over stdio
@@ -75,10 +78,10 @@ Defaults when omitted: single-dc topology, 3 brokers (broker-1..broker-3), topic
 
 The connection is strictly read-only by construction: the ONLY Kafka requests issued are ApiVersions (the client handshake), Metadata (sent with AllowAutoTopicCreation=false, so a topic lookup can never create it), ListOffsets, ListGroups, DescribeGroups, OffsetFetch and DescribeConfigs (with the client's own FindCoordinator lookups for the group requests) - all read requests - plus DescribeProducers, only when the producers input is true (it needs READ on every selected topic, so it is off by default and is never sent otherwise). No records are produced, no topic or config is created or altered, no consumer group is joined, no offset is committed.
 
-Inputs mirror the CLI: bootstrap brokers (required), an exact topic list and/or a regex, TLS (caCert/clientCert/clientKey are FILE PATHS resolved on the MCP SERVER's host), SASL (prefer the MONEDULA_SIM_LINK_PASSWORD env var over passing the password), a timeout, the record-volume cap, and the opt-in producers flag (add up to 4 of the idempotent or transactional producers that wrote lately; other producers are invisible to Kafka's DescribeProducers). A selection wider than the 6 extra topics the simulator renders keeps the exact topics you listed, then the most eventful of the rest (partitions under-replicated or offline, then consumer lag, then how many groups read the topic, then retained records), and a warning names what was kept and why; more than 4 consumer groups on the rendered topics keeps the 4 with the most lag the same way. Over the broker (10) or per-topic partition (24) cap, or with more than 6 exact topics besides orders, the call fails unless clamp is set, listing every violation at once; a selection matching nothing is an actionable error, never a silent empty link.
+Inputs mirror the CLI: bootstrap brokers (required), an exact topic list and/or a regex, TLS (the CA and client certificate files are flags on the MCP server, not inputs), SASL (leave the password empty to use the server's MONEDULA_SIM_LINK_PASSWORD, which is sent only to brokers on its --allowed-brokers list; with that list set, the server connects to no other broker), a timeout, the record-volume cap, and the opt-in producers flag (add up to 4 of the idempotent or transactional producers that wrote lately; other producers are invisible to Kafka's DescribeProducers). A selection wider than the 6 extra topics the simulator renders keeps the exact topics you listed, then the most eventful of the rest (partitions under-replicated or offline, then consumer lag, then how many groups read the topic, then retained records), and a warning names what was kept and why; more than 4 consumer groups on the rendered topics keeps the 4 with the most lag the same way. Over the broker (10) or per-topic partition (24) cap, or with more than 6 exact topics besides orders, the call fails unless clamp is set, listing every violation at once; a selection matching nothing is an actionable error, never a silent empty link.
 
 Returns the URL, the size param, the real→simulator broker/topic name tables, any warnings/approximations, and the actions decoded back OUT of the URL so you can confirm the mapping is lossless.`,
-	}, clusterToURLHandler(base))
+	}, clusterToURLHandler(base, opts.Security))
 
 	return srv
 }

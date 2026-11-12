@@ -54,6 +54,9 @@ type ConnectParams struct {
 	// so the mapping can add the producers that wrote lately. Off by default: a
 	// snapshot without it never sends that request.
 	Producers bool
+	// NoPasswordEnv turns off the PasswordEnvVar fallback. The MCP server
+	// sets it and applies the fallback itself, only for allow-listed brokers.
+	NoPasswordEnv bool
 }
 
 // Snapshot connects READ-ONLY and takes a point-in-time snapshot, returning it
@@ -110,7 +113,7 @@ func buildConnectConfig(p ConnectParams) snapshot.ConnectConfig {
 	}
 	if p.SASLMechanism != "" || p.Username != "" {
 		password := p.Password
-		if password == "" {
+		if password == "" && !p.NoPasswordEnv {
 			password = os.Getenv(PasswordEnvVar)
 		}
 		cfg.SASL = &snapshot.SASLConfig{Mechanism: p.SASLMechanism, Username: p.Username, Password: password}
