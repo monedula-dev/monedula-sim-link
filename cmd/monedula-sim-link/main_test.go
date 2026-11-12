@@ -227,3 +227,18 @@ func TestValidateEmitsCompressedForm(t *testing.T) {
 		t.Fatalf("round-trip lost data: got %d entries, want %d", len(decoded), len(res.Entries))
 	}
 }
+
+// TestMCPRefusesUnsafeCredentialFlags: a client certificate without an
+// allow-list (or without its key) stops the server before it serves.
+func TestMCPRefusesUnsafeCredentialFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"mcp", "--client-cert", "c.pem", "--client-key", "c.key"},
+		{"mcp", "--client-cert", "c.pem", "--allowed-brokers", "a:9092"},
+		{"mcp", "--allowed-brokers", "no-port"},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := run(args, &stdout, &stderr); code != 2 {
+			t.Errorf("%v: exit %d, want 2 (stderr %q)", args, code, stderr.String())
+		}
+	}
+}

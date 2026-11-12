@@ -24,14 +24,11 @@ type ClusterToURLInput struct {
 	Topics      []string `json:"topics,omitempty" jsonschema:"exact topic names to include. Fails if any is missing. Always kept when the selection is over the 6-extra-topic cap; the free slots go to the most eventful other topics. Also the only way to include internal topics (flagged internal by the broker, or with a leading '_'). Omit (with no topicsRegex) to include every non-internal topic"`
 	TopicsRegex string   `json:"topicsRegex,omitempty" jsonschema:"additionally include non-internal topics whose name matches this Go (RE2) regexp"`
 
-	TLS        bool   `json:"tls,omitempty" jsonschema:"connect over TLS (implied when any of caCert/clientCert/clientKey is set)"`
-	CACert     string `json:"caCert,omitempty" jsonschema:"PEM CA certificate FILE PATH to trust, appended to the system pool. The path is resolved on the MCP server's host, not the client's"`
-	ClientCert string `json:"clientCert,omitempty" jsonschema:"PEM client certificate FILE PATH for mTLS (needs clientKey). Resolved on the MCP server's host"`
-	ClientKey  string `json:"clientKey,omitempty" jsonschema:"PEM client key FILE PATH for mTLS (needs clientCert). Resolved on the MCP server's host"`
+	TLS bool `json:"tls,omitempty" jsonschema:"connect over TLS with the system CA pool. The CA certificate and the mTLS client certificate/key are not tool inputs: the operator sets them as flags on the MCP server (--ca-cert, --client-cert, --client-key), and any of them turns TLS on for every call"`
 
 	SASLMechanism string `json:"saslMechanism,omitempty" jsonschema:"SASL mechanism: plain, scram-sha-256 or scram-sha-512 (requires username)"`
 	Username      string `json:"username,omitempty" jsonschema:"SASL username"`
-	Password      string `json:"password,omitempty" jsonschema:"SASL password. Prefer setting the MONEDULA_SIM_LINK_PASSWORD environment variable on the MCP server's host over passing the secret here; the env var is the fallback when this is empty"`
+	Password      string `json:"password,omitempty" jsonschema:"SASL password. Prefer leaving it empty: the MCP server then uses its MONEDULA_SIM_LINK_PASSWORD environment variable, but only for brokers on its --allowed-brokers list"`
 
 	TimeoutSeconds         int  `json:"timeoutSeconds,omitempty" jsonschema:"overall snapshot timeout in seconds (default 15)"`
 	MaxRecordsPerPartition int  `json:"maxRecordsPerPartition,omitempty" jsonschema:"cap on synthetic trailing records produced per partition to represent data volume (default 8)"`
@@ -62,7 +59,7 @@ type ClusterToURLOutput struct {
 	Notes          []string      `json:"notes,omitempty" jsonschema:"non-fatal hints"`
 }
 
-func clusterToURLHandler(base string) mcp.ToolHandlerFor[ClusterToURLInput, ClusterToURLOutput] {
+func clusterToURLHandler(base string, sec Security) mcp.ToolHandlerFor[ClusterToURLInput, ClusterToURLOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in ClusterToURLInput) (*mcp.CallToolResult, ClusterToURLOutput, error) {
 		var zero ClusterToURLOutput
 
@@ -71,20 +68,21 @@ func clusterToURLHandler(base string) mcp.ToolHandlerFor[ClusterToURLInput, Clus
 			return nil, zero, fmt.Errorf("brokers is required: pass at least one bootstrap host:port")
 		}
 
-		snap, warnings, err := emit.Snapshot(ctx, emit.ConnectParams{
+		params := emit.ConnectParams{
 			Brokers:       brokers,
 			Topics:        in.Topics,
 			TopicsRegex:   in.TopicsRegex,
 			TLSEnable:     in.TLS,
-			CACert:        in.CACert,
-			ClientCert:    in.ClientCert,
-			ClientKey:     in.ClientKey,
 			SASLMechanism: in.SASLMechanism,
 			Username:      in.Username,
-			Password:      in.Password,
 			Timeout:       time.Duration(in.TimeoutSeconds) * time.Second,
 			Producers:     in.Producers,
-		})
+		}
+		if err := sec.applyConnectPolicy(&params, in.Password); err != nil {
+			return nil, zero, err
+		}
+
+		snap, warnings, err := emit.Snapshot(ctx, params)
 		if err != nil {
 			return nil, zero, err
 		}
