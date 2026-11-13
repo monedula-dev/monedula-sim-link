@@ -423,7 +423,8 @@ cluster:
 
 Three more action kinds act on the object storage bucket behind every diskless
 implementation: the KIP draft (`diskless-3az`), Inkless, KafScale and AutoMQ.
-They take no fields and are a no-op on a cluster without diskless topics:
+(playground-url-api.md §2). They take no fields and are a no-op on a cluster
+without diskless topics:
 
 | Action kind | Code | Notes |
 |---|---|---|
