@@ -421,6 +421,18 @@ cluster:
 | `stop_coordinator_db` / `start_coordinator_db` | `DB:0` / `DB:1` | the Inkless PostgreSQL batch coordinator (`inkless-3az`) |
 | `stop_etcd` / `start_etcd` | `ET:0` / `ET:1` | KafScale's etcd, which holds the metadata and partition leases (`kafscale-3b`) |
 
+Three more action kinds act on the object storage bucket behind every diskless
+implementation: the KIP draft (`diskless-3az`), Inkless, KafScale and AutoMQ.
+They take no fields and are a no-op on a cluster without diskless topics:
+
+| Action kind | Code | Notes |
+|---|---|---|
+| `stop_object_storage` | `OS:0` | object storage becomes unavailable |
+| `slow_object_storage` | `OS:s` | every object storage operation takes 2 s |
+| `start_object_storage` | `OS:1` | object storage is available again (KafScale's S3 health monitor still refuses until 60 s after its last bad sample) |
+
+Any other `OS` payload is an error here; the playground drops it.
+
 A deployment of the playground older than v2.3 falls back to single-dc for
 these `cluster` values and drops the codes.
 

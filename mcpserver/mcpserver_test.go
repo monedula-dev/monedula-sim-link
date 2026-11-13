@@ -635,3 +635,45 @@ func TestBuildURLDisklessControlPlanes(t *testing.T) {
 		"topics": []map[string]any{{"name": "orders", "partitions": 6, "replicationFactor": 3}},
 	}}), "replication factor 1")
 }
+
+// TestBuildURLObjectStorage builds the v2.3 object storage actions end to end
+// on every diskless implementation preset (and the KIP draft's diskless-3az):
+// the bucket stopped, slowed and started, with the playground's own OS codes in
+// the URL and the kinds echoed back.
+func TestBuildURLObjectStorage(t *testing.T) {
+	s := newSession(t)
+	for _, cluster := range []string{"diskless-3az", "inkless-3az", "kafscale-3b", "automq-3az"} {
+		res := callTool(t, s, "build_playground_url", map[string]any{
+			"cluster": cluster,
+			"actions": []map[string]any{
+				{"kind": "stop_object_storage", "at": 2000},
+				{"kind": "start_object_storage", "at": 5000},
+				{"kind": "slow_object_storage", "at": 7000},
+			},
+		})
+		var out BuildPlaygroundURLOutput
+		structured(t, res, &out)
+		if got, want := actionsParamOf(t, out.URL), "OS:0@2000,OS:1@5000,OS:s@7000"; got != want {
+			t.Errorf("%s: URL actions param %q, want %q", cluster, got, want)
+		}
+		kinds := []string{"stop_object_storage", "start_object_storage", "slow_object_storage"}
+		if len(out.DecodedActions) != len(kinds) {
+			t.Fatalf("%s: echoed %+v", cluster, out.DecodedActions)
+		}
+		for i, k := range kinds {
+			if out.DecodedActions[i].Kind != k {
+				t.Errorf("%s: echoed[%d] kind %q, want %q", cluster, i, out.DecodedActions[i].Kind, k)
+			}
+		}
+	}
+
+	res := callTool(t, s, "validate_actions", map[string]any{"actions": "OS:0@1000,OS:s@2000,OS:x@3000,OS:1@4000"})
+	var out ValidateActionsOutput
+	structured(t, res, &out)
+	if len(out.Entries) != 3 || len(out.Dropped) != 1 || !strings.HasPrefix(out.Dropped[0].Entry, "OS:x") {
+		t.Fatalf("entries %+v dropped %+v, want 3 kept and OS:x dropped", out.Entries, out.Dropped)
+	}
+	if out.Entries[1].Kind != "slow_object_storage" {
+		t.Errorf("OS:s previewed as %+v, want slow_object_storage", out.Entries[1])
+	}
+}

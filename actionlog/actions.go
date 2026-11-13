@@ -765,3 +765,32 @@ type StartEtcd struct{}
 func (StartEtcd) isAction()                {}
 func (StartEtcd) kind() string             { return "ET" }
 func (StartEtcd) payload() (string, error) { return "1", nil }
+
+// --- Diskless object storage (v2.3) -----------------------------------------
+//
+// The playground writes these as "OS:0" (stop), "OS:s" (slow) and "OS:1"
+// (start). They act on the bucket behind every diskless implementation (the
+// KIP draft, Inkless, KafScale and AutoMQ) and are a no-op on a cluster
+// without diskless topics.
+
+// StopObjectStorage makes object storage unavailable (OS:0).
+type StopObjectStorage struct{}
+
+func (StopObjectStorage) isAction()                {}
+func (StopObjectStorage) kind() string             { return "OS" }
+func (StopObjectStorage) payload() (string, error) { return "0", nil }
+
+// SlowObjectStorage makes every object storage operation slow (OS:s); the
+// playground uses 2 s per operation.
+type SlowObjectStorage struct{}
+
+func (SlowObjectStorage) isAction()                {}
+func (SlowObjectStorage) kind() string             { return "OS" }
+func (SlowObjectStorage) payload() (string, error) { return "s", nil }
+
+// StartObjectStorage makes object storage available again (OS:1).
+type StartObjectStorage struct{}
+
+func (StartObjectStorage) isAction()                {}
+func (StartObjectStorage) kind() string             { return "OS" }
+func (StartObjectStorage) payload() (string, error) { return "1", nil }
