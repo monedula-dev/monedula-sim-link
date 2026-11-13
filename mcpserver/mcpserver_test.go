@@ -593,3 +593,45 @@ func TestValidateActionsSchemaRegistry(t *testing.T) {
 		t.Errorf("RPR:p1:x previewed as %+v, want a plain restart_producer", last)
 	}
 }
+
+// TestBuildURLDisklessControlPlanes builds the v2.3 control-plane sessions end
+// to end: PostgreSQL stopped and started on inkless-3az, etcd on kafscale-3b,
+// with the playground's own DB/ET codes in the URL and the kinds echoed back.
+func TestBuildURLDisklessControlPlanes(t *testing.T) {
+	s := newSession(t)
+	for _, c := range []struct {
+		cluster string
+		stop    string
+		start   string
+		want    string
+	}{
+		{"inkless-3az", "stop_coordinator_db", "start_coordinator_db", "DB:0@2400,DB:1@6000"},
+		{"kafscale-3b", "stop_etcd", "start_etcd", "ET:0@2400,ET:1@6000"},
+	} {
+		res := callTool(t, s, "build_playground_url", map[string]any{
+			"cluster": c.cluster,
+			"actions": []map[string]any{{"kind": c.stop, "at": 2400}, {"kind": c.start, "at": 6000}},
+		})
+		var out BuildPlaygroundURLOutput
+		structured(t, res, &out)
+		if out.Cluster != c.cluster || out.Size != "" {
+			t.Errorf("%s: cluster %q size %q, want the preset default", c.cluster, out.Cluster, out.Size)
+		}
+		if got := actionsParamOf(t, out.URL); got != c.want {
+			t.Errorf("%s: URL actions param %q, want %q", c.cluster, got, c.want)
+		}
+		if len(out.DecodedActions) != 2 || out.DecodedActions[0].Kind != c.stop || out.DecodedActions[1].Kind != c.start {
+			t.Errorf("%s: echoed %+v", c.cluster, out.DecodedActions)
+		}
+	}
+
+	res := callTool(t, s, "validate_actions", map[string]any{"actions": "DB:0@1000,ET:1@2000,DB:2@3000"})
+	var out ValidateActionsOutput
+	structured(t, res, &out)
+	if len(out.Entries) != 2 || len(out.Dropped) != 1 || !strings.HasPrefix(out.Dropped[0].Entry, "DB:2") {
+		t.Fatalf("entries %+v dropped %+v, want 2 kept and DB:2 dropped", out.Entries, out.Dropped)
+	}
+	wantToolError(t, callTool(t, s, "build_playground_url", map[string]any{"cluster": "automq-3az", "shape": map[string]any{
+		"topics": []map[string]any{{"name": "orders", "partitions": 6, "replicationFactor": 3}},
+	}}), "replication factor 1")
+}

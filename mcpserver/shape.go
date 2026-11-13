@@ -30,7 +30,7 @@ type ClusterShape struct {
 	// freePlayTopologies.ts. Requires at least one topic with DisklessEnable
 	// (validateDisklessTiming); rejected otherwise, mirroring the TS store's
 	// "kept only when some topic is diskless" rule.
-	DisklessTiming *DisklessTimingShape `json:"disklessTiming,omitempty" jsonschema:"optional KIP-1163 draft diskless timing override (v2.0+); requires a diskless topic (disklessEnable, or the diskless-3az preset)"`
+	DisklessTiming *DisklessTimingShape `json:"disklessTiming,omitempty" jsonschema:"optional diskless timing override (v2.0+); requires a diskless topic (disklessEnable, or a diskless preset: diskless-3az, inkless-3az, kafscale-3b or automq-3az). kafscale-3b takes uploadMs only (KafScale has no commit interval); on automq-3az commitIntervalMs is the WAL batch interval"`
 	// SchemaRegistry turns the session's schema registry on (size tail index
 	// 14). Mirrors FreePlaySize.schemaRegistry / srInstancesPerDc /
 	// srFollowerOnlyDcs in freePlayTopologies.ts.
@@ -68,7 +68,7 @@ type TopicShape struct {
 	// with a compacted cleanupPolicy or on a mirror topology
 	// (active-passive/active-active), mirroring disklessAllowed in
 	// freePlayTopologies.ts.
-	DisklessEnable bool `json:"disklessEnable,omitempty" jsonschema:"optional KIP-1163 draft diskless.enable (v2.0+); not compatible with a compacted cleanupPolicy or a mirror topology"`
+	DisklessEnable bool `json:"disklessEnable,omitempty" jsonschema:"optional KIP-1163 draft diskless.enable (v2.0+); not compatible with a compacted cleanupPolicy or a mirror topology. On kafscale-3b and automq-3az every topic is diskless already; on inkless-3az the primary 'orders' stays classic"`
 }
 
 // topology mirrors the §10 table.
@@ -87,7 +87,27 @@ type topology struct {
 	// .some((t) => t.disklessEnable) in freePlayTopologies.ts, which
 	// freePlaySizeHasDiskless folds into its "any topic is diskless" check.
 	templateDiskless bool
+	// fixedTopics are the preset's own topics next to `orders` (TEMPLATES[type]
+	// .extraTopics in freePlayTopologies.ts). clampExtraTopics renames a caller
+	// topic that takes one of these names, so the shape refuses it instead.
+	fixedTopics []string
+	// impl is the diskless implementation the preset runs (v2.3,
+	// TEMPLATES[type].disklessImpl): "" for the KIP-1163 draft and the classic
+	// topologies, else "inkless", "kafscale" or "automq".
+	impl string
 }
+
+// topologyOrder lists the topologies in the playground's own order, for errors.
+var topologyOrder = []string{"single-dc", "active-passive", "active-active", "stretched-2-5", "stretched-3", "diskless-3az", "inkless-3az", "kafscale-3b", "automq-3az"}
+
+// allDiskless mirrors primaryDisklessByConstruction in freePlayTopologies.ts:
+// KafScale and AutoMQ have no classic topics, so every topic is diskless and
+// RF 1 (rfMaxFor), whatever the shape says.
+func allDiskless(t topology) bool { return t.impl == "kafscale" || t.impl == "automq" }
+
+// hasCommitInterval mirrors disklessHasCommitInterval: KafScale flushes per
+// produce request, so the playground drops a commit interval there.
+func hasCommitInterval(t topology) bool { return t.impl != "kafscale" }
 
 var topologies = map[string]topology{
 	"single-dc":      {slug: "single-dc", zones: []string{"single"}, defaultBrokers: []int{3}, defaultPartitions: 3, defaultRF: 3, brokerCap: 10, partitionCap: 24},
@@ -107,11 +127,29 @@ var topologies = map[string]topology{
 	// (MAX_FREE_PLAY_BROKERS=9, MAX_FREE_PLAY_PARTITIONS=6) - diskless-3az does
 	// NOT get single-dc's higher caps (freePlayBrokerCap/maxFreePlayPartitions
 	// both gate on the exact string "single-dc").
-	"diskless-3az": {slug: "diskless-3az", zones: []string{"single"}, defaultBrokers: []int{6}, defaultPartitions: 3, defaultRF: 3, brokerCap: 9, partitionCap: 6, templateDiskless: true},
+	"diskless-3az": {slug: "diskless-3az", zones: []string{"single"}, defaultBrokers: []int{6}, defaultPartitions: 3, defaultRF: 3, brokerCap: 9, partitionCap: 6, templateDiskless: true, fixedTopics: []string{"clicks"}},
+	// v2.3 diskless implementations, each one cluster in the single 'single'
+	// zone with the shared multi-DC caps, like diskless-3az. Their racks, the
+	// Inkless PostgreSQL zone and the template clients are intrinsic to the
+	// preset and never URL-encoded.
+	//
+	// inkless-3az: diskless-3az on Aiven Inkless. `orders` stays classic (the
+	// primary diskless toggle is not offered), `clicks` is diskless at RF 1, and
+	// PostgreSQL in az-a is the batch coordinator (actions DB:0/DB:1).
+	"inkless-3az": {slug: "inkless-3az", zones: []string{"single"}, defaultBrokers: []int{6}, defaultPartitions: 3, defaultRF: 3, brokerCap: 9, partitionCap: 6, templateDiskless: true, fixedTopics: []string{"clicks"}, impl: "inkless"},
+	// kafscale-3b: three brokers on KafScale, every topic diskless at RF 1 in S3
+	// behind etcd partition leases (actions ET:0/ET:1); no commit interval.
+	"kafscale-3b": {slug: "kafscale-3b", zones: []string{"single"}, defaultBrokers: []int{3}, defaultPartitions: 3, defaultRF: 1, brokerCap: 9, partitionCap: 6, impl: "kafscale"},
+	// automq-3az: three brokers on AutoMQ cycling racks az-a/b/c, every topic
+	// S3-backed at RF 1 behind a per-broker WAL; six partitions by default.
+	"automq-3az": {slug: "automq-3az", zones: []string{"single"}, defaultBrokers: []int{3}, defaultPartitions: 6, defaultRF: 1, brokerCap: 9, partitionCap: 6, impl: "automq"},
 }
 
 // rfMax is §12's rfMaxFor: the broker set a single RF must fit into.
 func rfMax(t topology, brokers []int) int {
+	if allDiskless(t) {
+		return 1
+	}
 	total := 0
 	for _, b := range brokers {
 		total += b
@@ -201,7 +239,7 @@ func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam
 	}
 	topo, ok := topologies[cluster]
 	if !ok {
-		return "", "", nil, fmt.Errorf("cluster %q is not a free-play topology; expected one of single-dc, active-passive, active-active, stretched-2-5, stretched-3, diskless-3az", cluster)
+		return "", "", nil, fmt.Errorf("cluster %q is not a free-play topology; expected one of %s", cluster, strings.Join(topologyOrder, ", "))
 	}
 	if cluster != "single-dc" {
 		clusterParam = cluster
@@ -223,6 +261,10 @@ func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam
 	var primary *TopicShape
 	var extras []TopicShape
 	seen := map[string]bool{"orders": true}
+	fixed := map[string]bool{}
+	for _, n := range topo.fixedTopics {
+		fixed[n] = true
+	}
 	for i, t := range shape.Topics {
 		if !topicNameRe.MatchString(t.Name) {
 			return "", "", nil, fmt.Errorf("shape.topics[%d].name %q: must match [A-Za-z0-9._-], at most 40 chars", i, t.Name)
@@ -234,6 +276,9 @@ func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam
 			tt := t
 			primary = &tt
 			continue
+		}
+		if fixed[t.Name] {
+			return "", "", nil, fmt.Errorf("shape.topics[%d].name %q: cluster %q already has a topic of that name (the playground would rename yours)", i, t.Name, cluster)
 		}
 		if seen[t.Name] {
 			return "", "", nil, fmt.Errorf("shape.topics[%d].name %q: duplicate topic name (the playground would rename it)", i, t.Name)
@@ -258,7 +303,7 @@ func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam
 		return "", "", nil, fmt.Errorf("shape.topics (primary 'orders'): %w", err)
 	}
 	if primary != nil {
-		if err := validateTopicConfig(topo, *primary); err != nil {
+		if err := validateTopicConfig(topo, *primary, true); err != nil {
 			return "", "", nil, fmt.Errorf("shape.topics (primary 'orders'): %w", err)
 		}
 	}
@@ -266,7 +311,7 @@ func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam
 		if err := validateTopic(topo, brokers, t.Partitions, t.ReplicationFactor); err != nil {
 			return "", "", nil, fmt.Errorf("shape.topics (%q): %w", t.Name, err)
 		}
-		if err := validateTopicConfig(topo, t); err != nil {
+		if err := validateTopicConfig(topo, t, false); err != nil {
 			return "", "", nil, fmt.Errorf("shape.topics (%q): %w", t.Name, err)
 		}
 	}
@@ -279,13 +324,13 @@ func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam
 	base := strings.Join(zoneParts, "-") + "x" + strconv.Itoa(partitions) + "x" + strconv.Itoa(rf)
 
 	// --- diskless timing (KIP-1163 draft, v2.0+) -------------
-	anyDiskless := (primary != nil && primary.DisklessEnable) || topo.templateDiskless
+	anyDiskless := (primary != nil && primary.DisklessEnable) || topo.templateDiskless || allDiskless(topo)
 	for _, t := range extras {
 		if t.DisklessEnable {
 			anyDiskless = true
 		}
 	}
-	if err := validateDisklessTiming(shape.DisklessTiming, anyDiskless); err != nil {
+	if err := validateDisklessTiming(topo, shape.DisklessTiming, anyDiskless); err != nil {
 		return "", "", nil, fmt.Errorf("shape.disklessTiming: %w", err)
 	}
 
@@ -304,7 +349,7 @@ func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam
 	if len(extras) > 0 {
 		chunks := make([]string, len(extras))
 		for i, t := range extras {
-			chunks[i] = topicChunk(t)
+			chunks[i] = topicChunk(t, allDiskless(topo))
 		}
 		tail[0] = strings.Join(chunks, "!")
 	}
@@ -323,7 +368,10 @@ func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam
 	if shape.DisklessTiming != nil {
 		commitMs, uploadMs = shape.DisklessTiming.CommitIntervalMs, shape.DisklessTiming.UploadMs
 	}
-	primaryDiskless := primary != nil && primary.DisklessEnable
+	// The primary diskless flag exists only for the KIP-1163 draft: on KafScale
+	// and AutoMQ the primary is diskless by construction and the playground
+	// drops the flag, so writing it would not be canonical.
+	primaryDiskless := primary != nil && primary.DisklessEnable && topo.impl == ""
 	if disklessEnc := mapping.EncodeDisklessTail(primaryDiskless, commitMs, uploadMs); disklessEnc != "" {
 		tail[17] = disklessEnc
 	}
@@ -405,6 +453,9 @@ func validateTopic(topo topology, brokers []int, partitions, rf int) error {
 	if rf < 1 {
 		return fmt.Errorf("replicationFactor %d must be >= 1", rf)
 	}
+	if allDiskless(topo) && rf > 1 {
+		return fmt.Errorf("replicationFactor %d: every topic on %s has replication factor 1, since S3 holds the data", rf, topo.slug)
+	}
 	if m := rfMax(topo, brokers); rf > m {
 		return fmt.Errorf("replicationFactor %d exceeds the maximum %d for this broker layout (§12)", rf, m)
 	}
@@ -421,7 +472,7 @@ func isMirrorType(slug string) bool {
 	return slug == "active-passive" || slug == "active-active"
 }
 
-func validateTopicConfig(topo topology, t TopicShape) error {
+func validateTopicConfig(topo topology, t TopicShape, isPrimary bool) error {
 	if t.MinInSyncReplicas != nil {
 		if *t.MinInSyncReplicas < 1 || *t.MinInSyncReplicas > t.ReplicationFactor {
 			return fmt.Errorf("minInSyncReplicas %d must be within 1..replicationFactor (%d)", *t.MinInSyncReplicas, t.ReplicationFactor)
@@ -437,7 +488,19 @@ func validateTopicConfig(topo topology, t TopicShape) error {
 	// policy, not on a mirror topology. (This tool never sets
 	// remoteStorageEnable, the third exclusion, so there is nothing to check
 	// for it.)
+	// v2.3: every topic on KafScale and AutoMQ is diskless, and the simulator
+	// models neither one's compaction (KafScale has none; AutoMQ has it, the
+	// simulator does not model it yet), so a compacted topic is refused there.
+	if allDiskless(topo) {
+		if strings.Contains(t.CleanupPolicy, "compact") {
+			return fmt.Errorf("cleanupPolicy %q: the simulator does not model compacted topics on %s, where every topic is diskless", t.CleanupPolicy, topo.slug)
+		}
+		return nil
+	}
 	if t.DisklessEnable {
+		if isPrimary && topo.impl == "inkless" {
+			return fmt.Errorf("disklessEnable: on %s the primary 'orders' stays a classic topic next to the diskless 'clicks'; make an extra topic diskless instead", topo.slug)
+		}
 		if strings.Contains(t.CleanupPolicy, "compact") {
 			return fmt.Errorf("disklessEnable: not compatible with cleanupPolicy %q (KIP-1163 draft, v2.0+)", t.CleanupPolicy)
 		}
@@ -453,12 +516,15 @@ func validateTopicConfig(topo topology, t TopicShape) error {
 // and a timing override is only meaningful when at least one topic is
 // diskless - reject it outright instead of silently dropping it, so a caller
 // never gets a slug that omits a field it asked for.
-func validateDisklessTiming(dt *DisklessTimingShape, anyDiskless bool) error {
+func validateDisklessTiming(topo topology, dt *DisklessTimingShape, anyDiskless bool) error {
 	if dt == nil || (dt.CommitIntervalMs == nil && dt.UploadMs == nil) {
 		return nil
 	}
 	if !anyDiskless {
-		return fmt.Errorf("requires a diskless topic (disklessEnable, or the diskless-3az preset) (KIP-1163 draft, v2.0+)")
+		return fmt.Errorf("requires a diskless topic (disklessEnable, or a diskless preset: diskless-3az, inkless-3az, kafscale-3b or automq-3az) (KIP-1163 draft, v2.0+)")
+	}
+	if dt.CommitIntervalMs != nil && !hasCommitInterval(topo) {
+		return fmt.Errorf("commitIntervalMs: %s has no commit interval (KafScale flushes the segment per produce request); set uploadMs only", topo.slug)
 	}
 	if dt.CommitIntervalMs != nil && (*dt.CommitIntervalMs < 100 || *dt.CommitIntervalMs > 5000) {
 		return fmt.Errorf("commitIntervalMs %d must be within [100, 5000]", *dt.CommitIntervalMs)
@@ -479,7 +545,11 @@ func validateDisklessTiming(dt *DisklessTimingShape, anyDiskless bool) error {
 // unread value too) and an unset cleanup is delete: the simulator's decoder drops
 // a whole extra topic whose min.ISR field is not a number, so leaving the field
 // empty for "unset" silently lost the topic from the link.
-func topicChunk(t TopicShape) string {
+//
+// forceDiskless is the KafScale/AutoMQ case: every topic there is diskless, and
+// the playground's own encoder writes the `~1` for it, so the canonical chunk
+// carries it even when the shape leaves disklessEnable unset.
+func topicChunk(t TopicShape, forceDiskless bool) string {
 	minISR := "1"
 	if t.MinInSyncReplicas != nil {
 		minISR = strconv.Itoa(*t.MinInSyncReplicas)
@@ -496,7 +566,7 @@ func topicChunk(t TopicShape) string {
 		cleanup,
 		"", "", "", "",
 	}, "~")
-	if t.DisklessEnable {
+	if t.DisklessEnable || forceDiskless {
 		chunk += "~1"
 	}
 	return chunk

@@ -728,3 +728,40 @@ func (a SetSREligibility) payload() (string, error) {
 	}
 	return a.InstanceID + ":0", nil
 }
+
+// --- Diskless implementation control planes (v2.3) -------------------------
+//
+// The playground writes these as "DB:0"/"DB:1" and "ET:0"/"ET:1": the payload
+// is the target state, 0 = stopped, 1 = running. They act on the control plane
+// of a diskless implementation preset (cluster inkless-3az or kafscale-3b) and
+// are a no-op on any other cluster.
+
+// StopCoordinatorDB stops the Inkless batch coordinator's PostgreSQL (DB:0).
+type StopCoordinatorDB struct{}
+
+func (StopCoordinatorDB) isAction()                {}
+func (StopCoordinatorDB) kind() string             { return "DB" }
+func (StopCoordinatorDB) payload() (string, error) { return "0", nil }
+
+// StartCoordinatorDB starts the Inkless batch coordinator's PostgreSQL again
+// (DB:1).
+type StartCoordinatorDB struct{}
+
+func (StartCoordinatorDB) isAction()                {}
+func (StartCoordinatorDB) kind() string             { return "DB" }
+func (StartCoordinatorDB) payload() (string, error) { return "1", nil }
+
+// StopEtcd stops KafScale's etcd, which holds its metadata and partition
+// leases (ET:0).
+type StopEtcd struct{}
+
+func (StopEtcd) isAction()                {}
+func (StopEtcd) kind() string             { return "ET" }
+func (StopEtcd) payload() (string, error) { return "0", nil }
+
+// StartEtcd starts KafScale's etcd again (ET:1).
+type StartEtcd struct{}
+
+func (StartEtcd) isAction()                {}
+func (StartEtcd) kind() string             { return "ET" }
+func (StartEtcd) payload() (string, error) { return "1", nil }

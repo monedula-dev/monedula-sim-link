@@ -197,3 +197,27 @@ SIZE-SR stretched-3 2-2-2x3x3xxxxxxxxxxxxxxx2r02 => ["sr/sr-dc-a-1(f)","sr/sr-dc
 SIZE-SR active-passive 2-2x1x2xxxxxxxxxxxxxxx2r1 => ["sr/sr-primary-1","sr/sr-dr-1(f)"] :: {"brokersPerZone":[2,2],"partitions":1,"replicationFactor":2,"schemaRegistry":true,"srInstancesPerDc":1,"srFollowerOnlyDcs":[1]}
 SIZE-SR active-active 3-2x1x2xxxxxxxxxxxxxxx3 => ["sr/sr-west-1","sr/sr-west-2","sr/sr-east-1","sr/sr-east-2"] :: {"brokersPerZone":[3,2],"partitions":1,"replicationFactor":2,"schemaRegistry":true,"srInstancesPerDc":2}
 SIZE-SR diskless-3az 6x3x3xxxxxxxxxxxxxxx2 => ["sr/sr-dc-1-1"] :: {"brokersPerZone":[6],"partitions":3,"replicationFactor":3,"schemaRegistry":true,"srInstancesPerDc":1}
+# 2026-11-13 (v2.3 diskless implementations): SIZE-IMPL <type> <raw> => <slug> :: <json size>
+#   = decodeFreePlaySize(<type>, <raw>) then encodeFreePlaySize on the result, via a
+#   throwaway tsx script (not checked in) run from the website repo root, for the
+#   inkless-3az, kafscale-3b and automq-3az presets. Lines whose sides differ show what
+#   the playground rewrites: a primary diskless flag `d` is dropped on all three, a
+#   commit interval is dropped on kafscale-3b, RF is clamped to 1 on kafscale-3b and
+#   automq-3az, and an extra topic there always gets the diskless `~1`.
+#   mcpserver.TestShapeImplMatchesTypeScriptFixtures replays the right-hand slugs.
+SIZE-IMPL inkless-3az 6x3x3 => 6x3x3 :: {"brokersPerZone":[6],"partitions":3,"replicationFactor":3}
+SIZE-IMPL inkless-3az 6x3x3xxxxxxxxxxxxxxxxxx250.900 => 6x3x3xxxxxxxxxxxxxxxxxx250.900 :: {"brokersPerZone":[6],"partitions":3,"replicationFactor":3,"disklessTiming":{"commitIntervalMs":250,"uploadMs":900}}
+SIZE-IMPL inkless-3az 9x6x3xev~3~1~1~d~~~~~1 => 9x6x3xev~3~1~1~d~~~~~1 :: {"brokersPerZone":[9],"partitions":6,"replicationFactor":3,"extraTopics":[{"name":"ev","partitions":3,"replicationFactor":1,"minInSyncReplicas":1,"cleanupPolicy":"delete","disklessEnable":true}]}
+SIZE-IMPL inkless-3az 6x3x3xxxxxxxxxxxxxxxxxxd => 6x3x3 :: {"brokersPerZone":[6],"partitions":3,"replicationFactor":3}
+SIZE-IMPL kafscale-3b 3x3x1 => 3x3x1 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1}
+SIZE-IMPL kafscale-3b 3x3x1xxxxxxxxxxxxxxxxxx250.900 => 3x3x1xxxxxxxxxxxxxxxxxx.900 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"disklessTiming":{"uploadMs":900}}
+SIZE-IMPL kafscale-3b 3x3x1xxxxxxxxxxxxxxxxxx.900 => 3x3x1xxxxxxxxxxxxxxxxxx.900 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"disklessTiming":{"uploadMs":900}}
+SIZE-IMPL kafscale-3b 5x6x1xev~3~1~1~d~~~~ => 5x6x1xev~3~1~1~d~~~~~1 :: {"brokersPerZone":[5],"partitions":6,"replicationFactor":1,"extraTopics":[{"name":"ev","partitions":3,"replicationFactor":1,"minInSyncReplicas":1,"cleanupPolicy":"delete","disklessEnable":true}]}
+SIZE-IMPL kafscale-3b 5x6x1xev~3~1~1~d~~~~~1 => 5x6x1xev~3~1~1~d~~~~~1 :: {"brokersPerZone":[5],"partitions":6,"replicationFactor":1,"extraTopics":[{"name":"ev","partitions":3,"replicationFactor":1,"minInSyncReplicas":1,"cleanupPolicy":"delete","disklessEnable":true}]}
+SIZE-IMPL kafscale-3b 3x3x3 => 3x3x1 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1}
+SIZE-IMPL automq-3az 3x6x1 => 3x6x1 :: {"brokersPerZone":[3],"partitions":6,"replicationFactor":1}
+SIZE-IMPL automq-3az 3x3x1 => 3x3x1 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1}
+SIZE-IMPL automq-3az 4x6x1xxxxxxxxxxxxxxxxxx250.900 => 4x6x1xxxxxxxxxxxxxxxxxx250.900 :: {"brokersPerZone":[4],"partitions":6,"replicationFactor":1,"disklessTiming":{"commitIntervalMs":250,"uploadMs":900}}
+SIZE-IMPL automq-3az 3x6x1xev~2~1~1~d~~~~ => 3x6x1xev~2~1~1~d~~~~~1 :: {"brokersPerZone":[3],"partitions":6,"replicationFactor":1,"extraTopics":[{"name":"ev","partitions":2,"replicationFactor":1,"minInSyncReplicas":1,"cleanupPolicy":"delete","disklessEnable":true}]}
+SIZE-IMPL automq-3az 3x6x1xxxxxxxxxxxxxxx2 => 3x6x1xxxxxxxxxxxxxxx2 :: {"brokersPerZone":[3],"partitions":6,"replicationFactor":1,"schemaRegistry":true,"srInstancesPerDc":1}
+SIZE-IMPL automq-3az 3x6x1xxxxxxxxxxxxxxxxxxd => 3x6x1 :: {"brokersPerZone":[3],"partitions":6,"replicationFactor":1}

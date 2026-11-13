@@ -37,7 +37,7 @@ Add `--dry-run` to see the cluster shape, the real-to-simulator name tables and 
 
 ## MCP server
 
-`monedula-sim-link mcp` serves the Model Context Protocol over stdio, so Claude Code, Claude Desktop or another MCP client can build links: scenario deep links, free-play sessions from a description, and a live cluster snapshotted read-only. A free-play session can include a Schema Registry and, as a v2.2 preview, its failures: SR instances per DC and the `kill_sr`, `restart_sr`, `sr_failover`, `restart_producer` and `set_sr_eligibility` actions ([docs/mapping.md](docs/mapping.md)). In Claude Code:
+`monedula-sim-link mcp` serves the Model Context Protocol over stdio, so Claude Code, Claude Desktop or another MCP client can build links: scenario deep links, free-play sessions from a description, and a live cluster snapshotted read-only. A free-play session can include a Schema Registry and, as a v2.2 preview, its failures: SR instances per DC and the `kill_sr`, `restart_sr`, `sr_failover`, `restart_producer` and `set_sr_eligibility` actions. From v2.3 it can also run on a diskless implementation (`inkless-3az`, `kafscale-3b`, `automq-3az`) and stop and start its PostgreSQL or etcd ([docs/mapping.md](docs/mapping.md)). In Claude Code:
 
 ```bash
 claude mcp add monedula-sim-link -- monedula-sim-link mcp
