@@ -422,7 +422,7 @@ cluster:
 | `stop_etcd` / `start_etcd` | `ET:0` / `ET:1` | KafScale's etcd, which holds the metadata and partition leases (`kafscale-3b`) |
 
 Three more action kinds act on the object storage bucket behind every diskless
-implementation: the KIP draft (`diskless-3az`), Inkless, KafScale and AutoMQ.
+implementation: the KIP draft (`diskless-3az`), Inkless, KafScale and AutoMQ
 (playground-url-api.md §2). They take no fields and are a no-op on a cluster
 without diskless topics:
 
