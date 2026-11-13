@@ -71,6 +71,16 @@ func decodeAction(kind, payload string) (Action, error) {
 			return StartEtcd{}, nil
 		}
 		return nil, fmt.Errorf("etcd: expected 0 (stop) or 1 (start), got %q", payload)
+	case "OS":
+		switch payload {
+		case "0":
+			return StopObjectStorage{}, nil
+		case "s":
+			return SlowObjectStorage{}, nil
+		case "1":
+			return StartObjectStorage{}, nil
+		}
+		return nil, fmt.Errorf("object storage: expected 0 (stop), s (slow) or 1 (start), got %q", payload)
 	default:
 		return nil, fmt.Errorf("unsupported kind %q", kind)
 	}

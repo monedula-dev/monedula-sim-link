@@ -78,6 +78,7 @@ func TestRoundTripEachKind(t *testing.T) {
 		"set_sr_eligibility 0": {{At: 100, Action: SetSREligibility{InstanceID: "sr-dc-b-1"}}},
 		"coordinator db":       {{At: 100, Action: StopCoordinatorDB{}}, {At: 200, Action: StartCoordinatorDB{}}},
 		"etcd":                 {{At: 100, Action: StopEtcd{}}, {At: 200, Action: StartEtcd{}}},
+		"object storage":       {{At: 100, Action: StopObjectStorage{}}, {At: 200, Action: SlowObjectStorage{}}, {At: 300, Action: StartObjectStorage{}}},
 	}
 	for name, entries := range cases {
 		t.Run(name, func(t *testing.T) { roundTrip(t, entries) })
@@ -258,6 +259,9 @@ func TestDecodeRejectsMalformed(t *testing.T) {
 		"DB:2@100",            // coordinator db state is 0 or 1
 		"DB:@100",             // empty coordinator db state
 		"ET:start@100",        // etcd state is 0 or 1
+		"OS:2@100",            // object storage state is 0, s or 1
+		"OS:S@100",            // slow is lower-case s only
+		"OS:@100",             // empty object storage state
 	}
 	for _, raw := range bad {
 		if _, err := Decode(raw); err == nil {
@@ -310,7 +314,8 @@ func randomAction(rng *rand.Rand) Action {
 			RestartProducer{ProducerID: id("p"), NewSchema: rng.Intn(2) == 0},
 			SetSREligibility{InstanceID: id("sr"), Eligible: rng.Intn(2) == 0})
 	case 12:
-		return pickAction(rng, StopCoordinatorDB{}, StartCoordinatorDB{}, StopEtcd{}, StartEtcd{})
+		return pickAction(rng, StopCoordinatorDB{}, StartCoordinatorDB{}, StopEtcd{}, StartEtcd{},
+			StopObjectStorage{}, SlowObjectStorage{}, StartObjectStorage{})
 	default:
 		return produceRandom(rng, id)
 	}
@@ -427,7 +432,7 @@ func TestRestartProducerDecodesLikePlayground(t *testing.T) {
 
 // TestDisklessControlPlaneWire pins the v2.3 control-plane kinds to the
 // playground's own encoder output (actionLog.ts encodeOne): DB and ET carry the
-// target state, 0 = stop, 1 = start.
+// target state, 0 = stop, 1 = start, and OS adds s = slow.
 func TestDisklessControlPlaneWire(t *testing.T) {
 	cases := []struct {
 		entry Entry
@@ -437,6 +442,9 @@ func TestDisklessControlPlaneWire(t *testing.T) {
 		{Entry{At: 6000, Action: StartCoordinatorDB{}}, "DB:1@6000"},
 		{Entry{At: 1000, Action: StopEtcd{}}, "ET:0@1000"},
 		{Entry{At: 5000, Action: StartEtcd{}}, "ET:1@5000"},
+		{Entry{At: 2000, Action: StopObjectStorage{}}, "OS:0@2000"},
+		{Entry{At: 3000, Action: SlowObjectStorage{}}, "OS:s@3000"},
+		{Entry{At: 8000, Action: StartObjectStorage{}}, "OS:1@8000"},
 	}
 	for _, c := range cases {
 		got, err := EncodeEntry(c.entry)
