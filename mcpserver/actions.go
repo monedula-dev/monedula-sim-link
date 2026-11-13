@@ -11,7 +11,7 @@ import (
 // shape is echoed back by the tools after the URL self-decode, so a caller can
 // diff intent against what the playground will load.
 type ActionInput struct {
-	Kind string `json:"kind" jsonschema:"one of: produce, kill_broker, restart_broker, add_broker, remove_broker, add_producer, remove_producer, add_group, remove_group, add_consumer, add_share_group, config_change, reassign_partition, change_replication_factor, set_replica_speed, tier_offload, kill_sr, restart_sr, sr_failover, restart_producer, set_sr_eligibility"`
+	Kind string `json:"kind" jsonschema:"one of: produce, kill_broker, restart_broker, add_broker, remove_broker, add_producer, remove_producer, add_group, remove_group, add_consumer, add_share_group, config_change, reassign_partition, change_replication_factor, set_replica_speed, tier_offload, kill_sr, restart_sr, sr_failover, restart_producer, set_sr_eligibility, stop_coordinator_db, start_coordinator_db, stop_etcd, start_etcd"`
 	At   int    `json:"at" jsonschema:"simulation time in milliseconds at which the action fires; actions are replayed sorted by this value (>= 0). Space actions ~1000ms apart so the playground animates them one at a time"`
 
 	BrokerID string `json:"brokerId,omitempty" jsonschema:"broker id, e.g. broker-2 (kill_broker, restart_broker, add_broker, remove_broker, set_replica_speed). The default free-play cluster names brokers broker-1..broker-N"`
@@ -245,10 +245,20 @@ func toEntry(i int, a ActionInput) (actionlog.Entry, error) {
 			return fail("missing required field \"eligible\" (true = may lead, false = follower-only)")
 		}
 		action = actionlog.SetSREligibility{InstanceID: a.InstanceID, Eligible: *a.Eligible}
+	// v2.3 diskless control planes. No fields: they act on the cluster's one
+	// PostgreSQL (inkless-3az) or etcd (kafscale-3b) and are a no-op elsewhere.
+	case "stop_coordinator_db":
+		action = actionlog.StopCoordinatorDB{}
+	case "start_coordinator_db":
+		action = actionlog.StartCoordinatorDB{}
+	case "stop_etcd":
+		action = actionlog.StopEtcd{}
+	case "start_etcd":
+		action = actionlog.StartEtcd{}
 	case "":
 		return fail("missing required field \"kind\"")
 	default:
-		return fail("unknown kind; expected one of produce, kill_broker, restart_broker, add_broker, remove_broker, add_producer, remove_producer, add_group, remove_group, add_consumer, add_share_group, config_change, reassign_partition, change_replication_factor, set_replica_speed, tier_offload, kill_sr, restart_sr, sr_failover, restart_producer, set_sr_eligibility")
+		return fail("unknown kind; expected one of produce, kill_broker, restart_broker, add_broker, remove_broker, add_producer, remove_producer, add_group, remove_group, add_consumer, add_share_group, config_change, reassign_partition, change_replication_factor, set_replica_speed, tier_offload, kill_sr, restart_sr, sr_failover, restart_producer, set_sr_eligibility, stop_coordinator_db, start_coordinator_db, stop_etcd, start_etcd")
 	}
 
 	e := actionlog.Entry{At: a.At, Action: action}
@@ -384,6 +394,14 @@ func fromEntry(e actionlog.Entry) ActionInput {
 		out.InstanceID = a.InstanceID
 		e := a.Eligible
 		out.Eligible = &e
+	case actionlog.StopCoordinatorDB:
+		out.Kind = "stop_coordinator_db"
+	case actionlog.StartCoordinatorDB:
+		out.Kind = "start_coordinator_db"
+	case actionlog.StopEtcd:
+		out.Kind = "stop_etcd"
+	case actionlog.StartEtcd:
+		out.Kind = "start_etcd"
 	}
 	return out
 }

@@ -615,3 +615,142 @@ func TestShapeSchemaRegistryCombinesWithOtherSegments(t *testing.T) {
 		t.Fatalf("all follower-only: notes %v err %v", notes, err)
 	}
 }
+
+// TestShapeImplMatchesTypeScriptFixtures replays the SIZE-IMPL lines of
+// mapping/testdata/ts-fixtures.txt (v2.3), dumped from the real TypeScript
+// codec for the inkless-3az, kafscale-3b and automq-3az presets: the shape the
+// playground decodes from a slug must come back out of shapeToParams as the
+// slug the playground itself re-encodes (or no size at all for the preset
+// default).
+func TestShapeImplMatchesTypeScriptFixtures(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "mapping", "testdata", "ts-fixtures.txt"))
+	if err != nil {
+		t.Fatalf("read fixtures: %v", err)
+	}
+	checked := 0
+	for _, line := range strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n") {
+		if !strings.HasPrefix(line, "SIZE-IMPL ") {
+			continue
+		}
+		head, js, ok := strings.Cut(strings.TrimPrefix(line, "SIZE-IMPL "), " :: ")
+		fields := strings.Split(head, " ")
+		if !ok || len(fields) != 4 || fields[2] != "=>" {
+			t.Fatalf("malformed SIZE-IMPL fixture: %q", line)
+		}
+		typ, want := fields[0], fields[3]
+		var sz struct {
+			BrokersPerZone    []int `json:"brokersPerZone"`
+			Partitions        int   `json:"partitions"`
+			ReplicationFactor int   `json:"replicationFactor"`
+			ExtraTopics       []struct {
+				Name              string `json:"name"`
+				Partitions        int    `json:"partitions"`
+				ReplicationFactor int    `json:"replicationFactor"`
+				MinInSyncReplicas int    `json:"minInSyncReplicas"`
+				CleanupPolicy     string `json:"cleanupPolicy"`
+				DisklessEnable    bool   `json:"disklessEnable"`
+			} `json:"extraTopics"`
+			DisklessTiming   *DisklessTimingShape `json:"disklessTiming"`
+			SrInstancesPerDc int                  `json:"srInstancesPerDc"`
+			SchemaRegistry   bool                 `json:"schemaRegistry"`
+		}
+		if err := json.Unmarshal([]byte(js), &sz); err != nil {
+			t.Fatalf("%s %s: size json: %v", typ, want, err)
+		}
+		shape := &ClusterShape{
+			BrokersPerZone: sz.BrokersPerZone,
+			Topics:         []TopicShape{{Name: "orders", Partitions: sz.Partitions, ReplicationFactor: sz.ReplicationFactor}},
+			DisklessTiming: sz.DisklessTiming,
+		}
+		for _, e := range sz.ExtraTopics {
+			shape.Topics = append(shape.Topics, TopicShape{
+				Name: e.Name, Partitions: e.Partitions, ReplicationFactor: e.ReplicationFactor,
+				MinInSyncReplicas: intp(e.MinInSyncReplicas), CleanupPolicy: e.CleanupPolicy, DisklessEnable: e.DisklessEnable,
+			})
+		}
+		if sz.SchemaRegistry {
+			shape.SchemaRegistry = &SchemaRegistryShape{InstancesPerDc: sz.SrInstancesPerDc}
+		}
+		cluster, size, _, err := shapeToParams(typ, shape)
+		if err != nil {
+			t.Errorf("%s %s: shapeToParams: %v", typ, want, err)
+			continue
+		}
+		topo := topologies[typ]
+		if want == fmt.Sprintf("%dx%dx%d", topo.defaultBrokers[0], topo.defaultPartitions, topo.defaultRF) {
+			want = "" // the preset default is omitted from the URL
+		}
+		if cluster != typ || size != want {
+			t.Errorf("%s: cluster %q size %q, want %q", typ, cluster, size, want)
+		}
+		checked++
+	}
+	if checked != 16 {
+		t.Fatalf("replayed %d SIZE-IMPL fixtures, want 16", checked)
+	}
+}
+
+// TestShapeImplPresets covers what the v2.3 presets do with a shape beyond the
+// fixtures: their defaults, a diskless flag the playground ignores, and an
+// extra topic that is diskless without asking.
+func TestShapeImplPresets(t *testing.T) {
+	for _, c := range []struct {
+		cluster string
+		shape   *ClusterShape
+		want    string
+	}{
+		{"inkless-3az", nil, ""},
+		{"kafscale-3b", &ClusterShape{}, ""},
+		{"automq-3az", &ClusterShape{Brokers: 3}, ""},
+		// Diskless by construction: the flag on orders changes nothing.
+		{"automq-3az", &ClusterShape{Topics: []TopicShape{{Name: "orders", Partitions: 6, ReplicationFactor: 1, DisklessEnable: true}}}, ""},
+		{"kafscale-3b", &ClusterShape{Topics: []TopicShape{{Name: "orders", Partitions: 2, ReplicationFactor: 1, DisklessEnable: true}}}, "3x2x1"},
+		// An extra topic is diskless there without disklessEnable.
+		{"kafscale-3b", &ClusterShape{Topics: []TopicShape{{Name: "ev", Partitions: 1, ReplicationFactor: 1}}}, "3x3x1xev~1~1~1~d~~~~~1"},
+		// Inkless: a timing alone is fine (clicks is diskless), on 9 brokers.
+		{"inkless-3az", &ClusterShape{Brokers: 9, DisklessTiming: &DisklessTimingShape{UploadMs: intp(300)}}, "9x3x3xxxxxxxxxxxxxxxxxx.300"},
+		{"kafscale-3b", &ClusterShape{DisklessTiming: &DisklessTimingShape{UploadMs: intp(900)}}, "3x3x1xxxxxxxxxxxxxxxxxx.900"},
+	} {
+		cluster, size, _, err := shapeToParams(c.cluster, c.shape)
+		if err != nil {
+			t.Errorf("%s %+v: %v", c.cluster, c.shape, err)
+			continue
+		}
+		if cluster != c.cluster || size != c.want {
+			t.Errorf("%s %+v: cluster %q size %q, want %q", c.cluster, c.shape, cluster, size, c.want)
+		}
+	}
+}
+
+func TestShapeImplValidation(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		cluster string
+		shape   *ClusterShape
+		needles []string
+	}{
+		{"automq rf 3", "automq-3az", &ClusterShape{Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 3}}}, []string{"replicationFactor 3", "automq-3az", "replication factor 1"}},
+		{"kafscale extra rf 2", "kafscale-3b", &ClusterShape{Topics: []TopicShape{{Name: "ev", Partitions: 1, ReplicationFactor: 2}}}, []string{"\"ev\"", "replication factor 1"}},
+		{"kafscale commit interval", "kafscale-3b", &ClusterShape{DisklessTiming: &DisklessTimingShape{CommitIntervalMs: intp(250), UploadMs: intp(900)}}, []string{"shape.disklessTiming", "commitIntervalMs", "no commit interval"}},
+		{"automq compacted", "automq-3az", &ClusterShape{Topics: []TopicShape{{Name: "ev", Partitions: 1, ReplicationFactor: 1, CleanupPolicy: "compact"}}}, []string{"\"ev\"", "compacted", "automq-3az"}},
+		{"kafscale compacted primary", "kafscale-3b", &ClusterShape{Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 1, CleanupPolicy: "compact,delete"}}}, []string{"primary 'orders'", "compacted"}},
+		{"inkless diskless primary", "inkless-3az", &ClusterShape{Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 3, DisklessEnable: true}}}, []string{"disklessEnable", "stays a classic topic"}},
+		{"inkless clicks taken", "inkless-3az", &ClusterShape{Topics: []TopicShape{{Name: "clicks", Partitions: 1, ReplicationFactor: 1}}}, []string{"\"clicks\"", "already has a topic"}},
+		{"diskless-3az clicks taken", "diskless-3az", &ClusterShape{Topics: []TopicShape{{Name: "clicks", Partitions: 1, ReplicationFactor: 1}}}, []string{"\"clicks\"", "already has a topic"}},
+		{"too many brokers", "automq-3az", &ClusterShape{Brokers: 10}, []string{"10 total brokers", "cap of 9"}},
+		{"too many partitions", "kafscale-3b", &ClusterShape{Topics: []TopicShape{{Name: "orders", Partitions: 7, ReplicationFactor: 1}}}, []string{"partitions 7", "cap of 6"}},
+		{"unknown cluster", "warpstream", nil, []string{"\"warpstream\"", "inkless-3az, kafscale-3b, automq-3az"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, _, _, err := shapeToParams(c.cluster, c.shape)
+			if err == nil {
+				t.Fatalf("expected an error")
+			}
+			for _, n := range c.needles {
+				if !strings.Contains(err.Error(), n) {
+					t.Errorf("error %q does not mention %q", err, n)
+				}
+			}
+		})
+	}
+}

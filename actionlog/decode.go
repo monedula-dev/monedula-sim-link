@@ -54,6 +54,23 @@ func decodeAction(kind, payload string) (Action, error) {
 		return decodeRestartProducer(payload)
 	case "SRE":
 		return decodeSetSREligibility(payload)
+	case "DB":
+		// The playground keeps only "0" and "1" and drops anything else.
+		switch payload {
+		case "0":
+			return StopCoordinatorDB{}, nil
+		case "1":
+			return StartCoordinatorDB{}, nil
+		}
+		return nil, fmt.Errorf("coordinator db: expected 0 (stop) or 1 (start), got %q", payload)
+	case "ET":
+		switch payload {
+		case "0":
+			return StopEtcd{}, nil
+		case "1":
+			return StartEtcd{}, nil
+		}
+		return nil, fmt.Errorf("etcd: expected 0 (stop) or 1 (start), got %q", payload)
 	default:
 		return nil, fmt.Errorf("unsupported kind %q", kind)
 	}

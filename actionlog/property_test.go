@@ -246,6 +246,10 @@ func (m *mulberry32) genAction() Action {
 		func() Action { return SRFailover{DeploymentID: m.safeID()} },
 		func() Action { return RestartProducer{ProducerID: m.safeID(), NewSchema: m.boolean()} },
 		func() Action { return SetSREligibility{InstanceID: m.safeID(), Eligible: m.boolean()} },
+		func() Action { return StopCoordinatorDB{} },
+		func() Action { return StartCoordinatorDB{} },
+		func() Action { return StopEtcd{} },
+		func() Action { return StartEtcd{} },
 		func() Action {
 			// elect_preferred_leaders: topicless (all-topic-partitions, "*") or scoped.
 			if m.boolean() {

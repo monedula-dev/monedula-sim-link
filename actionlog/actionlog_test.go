@@ -76,6 +76,8 @@ func TestRoundTripEachKind(t *testing.T) {
 		"restart_producer new": {{At: 100, Action: RestartProducer{ProducerID: "p1", NewSchema: true}}},
 		"set_sr_eligibility 1": {{At: 100, Action: SetSREligibility{InstanceID: "sr-dc-b-1", Eligible: true}}},
 		"set_sr_eligibility 0": {{At: 100, Action: SetSREligibility{InstanceID: "sr-dc-b-1"}}},
+		"coordinator db":       {{At: 100, Action: StopCoordinatorDB{}}, {At: 200, Action: StartCoordinatorDB{}}},
+		"etcd":                 {{At: 100, Action: StopEtcd{}}, {At: 200, Action: StartEtcd{}}},
 	}
 	for name, entries := range cases {
 		t.Run(name, func(t *testing.T) { roundTrip(t, entries) })
@@ -253,6 +255,9 @@ func TestDecodeRejectsMalformed(t *testing.T) {
 		"SRE:sr-dc-1-1@100",   // missing eligibility flag
 		"SRE:sr-dc-1-1:2@100", // bad eligibility flag
 		"SRE::1@100",          // empty sr instance id
+		"DB:2@100",            // coordinator db state is 0 or 1
+		"DB:@100",             // empty coordinator db state
+		"ET:start@100",        // etcd state is 0 or 1
 	}
 	for _, raw := range bad {
 		if _, err := Decode(raw); err == nil {
@@ -276,7 +281,7 @@ func TestPropertyRoundTrip(t *testing.T) {
 
 func randomAction(rng *rand.Rand) Action {
 	id := func(prefix string) string { return prefix + string(rune('a'+rng.Intn(6))) }
-	switch rng.Intn(13) {
+	switch rng.Intn(14) {
 	case 0:
 		return AddBroker{BrokerID: id("b"), Rack: pick(rng, "", id("rack"))}
 	case 1:
@@ -304,6 +309,8 @@ func randomAction(rng *rand.Rand) Action {
 			KillSR{InstanceID: id("sr")}, RestartSR{InstanceID: id("sr")}, SRFailover{DeploymentID: id("sr")},
 			RestartProducer{ProducerID: id("p"), NewSchema: rng.Intn(2) == 0},
 			SetSREligibility{InstanceID: id("sr"), Eligible: rng.Intn(2) == 0})
+	case 12:
+		return pickAction(rng, StopCoordinatorDB{}, StartCoordinatorDB{}, StopEtcd{}, StartEtcd{})
 	default:
 		return produceRandom(rng, id)
 	}
@@ -414,6 +421,37 @@ func TestRestartProducerDecodesLikePlayground(t *testing.T) {
 		}
 		if len(got) != 1 || got[0].Action != want {
 			t.Errorf("Decode(%q) = %#v, want %#v", raw, got, want)
+		}
+	}
+}
+
+// TestDisklessControlPlaneWire pins the v2.3 control-plane kinds to the
+// playground's own encoder output (actionLog.ts encodeOne): DB and ET carry the
+// target state, 0 = stop, 1 = start.
+func TestDisklessControlPlaneWire(t *testing.T) {
+	cases := []struct {
+		entry Entry
+		want  string
+	}{
+		{Entry{At: 2400, Action: StopCoordinatorDB{}}, "DB:0@2400"},
+		{Entry{At: 6000, Action: StartCoordinatorDB{}}, "DB:1@6000"},
+		{Entry{At: 1000, Action: StopEtcd{}}, "ET:0@1000"},
+		{Entry{At: 5000, Action: StartEtcd{}}, "ET:1@5000"},
+	}
+	for _, c := range cases {
+		got, err := EncodeEntry(c.entry)
+		if err != nil {
+			t.Fatalf("EncodeEntry(%#v): %v", c.entry.Action, err)
+		}
+		if got != c.want {
+			t.Errorf("EncodeEntry(%#v) = %q, want %q", c.entry.Action, got, c.want)
+		}
+		back, err := Decode(c.want)
+		if err != nil {
+			t.Fatalf("Decode(%q): %v", c.want, err)
+		}
+		if len(back) != 1 || back[0] != c.entry {
+			t.Errorf("Decode(%q) = %#v, want %#v", c.want, back, c.entry)
 		}
 	}
 }

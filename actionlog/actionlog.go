@@ -2,8 +2,9 @@
 // log — the plain grammar of docs/playground-url-api.md §2. It implements the
 // subset a cluster visualizer needs (broker lifecycle, producers, produces,
 // consumer / share groups, config changes, reassignment, replication factor,
-// replica speed, tiered offload and the v2.2-preview Schema Registry failure
-// kinds) and is a faithful Go port of the
+// replica speed, tiered offload, the v2.2-preview Schema Registry failure
+// kinds and the v2.3 diskless control planes, PostgreSQL and etcd) and is a
+// faithful Go port of the
 // TypeScript codec in src/kafka-simulator/actionLog.ts.
 //
 // The playground decoder is TOLERANT: any entry it cannot parse is dropped
