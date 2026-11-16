@@ -729,12 +729,12 @@ func (a SetSREligibility) payload() (string, error) {
 	return a.InstanceID + ":0", nil
 }
 
-// --- Diskless implementation control planes (v2.3) -------------------------
+// --- Diskless implementation control planes (v2.2) -------------------------
 //
 // The playground writes these as "DB:0"/"DB:1" and "ET:0"/"ET:1": the payload
 // is the target state, 0 = stopped, 1 = running. They act on the control plane
-// of a diskless implementation preset (cluster inkless-3az or kafscale-3b) and
-// are a no-op on any other cluster.
+// of a diskless implementation preset (cluster inkless-3az, kafscale-3b or
+// kafscale-2-3b) and are a no-op on any other cluster.
 
 // StopCoordinatorDB stops the Inkless batch coordinator's PostgreSQL (DB:0).
 type StopCoordinatorDB struct{}
@@ -766,7 +766,7 @@ func (StartEtcd) isAction()                {}
 func (StartEtcd) kind() string             { return "ET" }
 func (StartEtcd) payload() (string, error) { return "1", nil }
 
-// --- Diskless object storage (v2.3) -----------------------------------------
+// --- Diskless object storage (v2.2) -----------------------------------------
 //
 // The playground writes these as "OS:0" (stop), "OS:s" (slow) and "OS:1"
 // (start). They act on the bucket behind every diskless implementation (the
@@ -794,3 +794,42 @@ type StartObjectStorage struct{}
 func (StartObjectStorage) isAction()                {}
 func (StartObjectStorage) kind() string             { return "OS" }
 func (StartObjectStorage) payload() (string, error) { return "1", nil }
+
+// --- KafScale broker pause (v2.2) -------------------------------------------
+//
+// The playground writes these as "BP:<broker>" (pause) and "BU:<broker>"
+// (resume). Pausing freezes the broker process (SIGSTOP, a long GC pause): its
+// requests time out and its etcd partition leases expire after the TTL.
+// Resuming wakes it (SIGCONT); KafScale 1.6.3 keeps its partition logs if its
+// etcd session expired meanwhile (KafScale issue #324), 2.0 drops them. Both
+// act on KafScale only (kafscale-3b, kafscale-2-3b) and are a no-op on any
+// other cluster, on a dead or paused broker (pause) and on a running one
+// (resume).
+
+// PauseBroker freezes a KafScale broker (BP).
+type PauseBroker struct {
+	BrokerID string
+}
+
+func (PauseBroker) isAction()    {}
+func (PauseBroker) kind() string { return "BP" }
+func (a PauseBroker) payload() (string, error) {
+	if err := validateRawField("broker id", a.BrokerID); err != nil {
+		return "", err
+	}
+	return a.BrokerID, nil
+}
+
+// ResumeBroker wakes a paused KafScale broker (BU).
+type ResumeBroker struct {
+	BrokerID string
+}
+
+func (ResumeBroker) isAction()    {}
+func (ResumeBroker) kind() string { return "BU" }
+func (a ResumeBroker) payload() (string, error) {
+	if err := validateRawField("broker id", a.BrokerID); err != nil {
+		return "", err
+	}
+	return a.BrokerID, nil
+}

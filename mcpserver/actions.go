@@ -11,10 +11,10 @@ import (
 // shape is echoed back by the tools after the URL self-decode, so a caller can
 // diff intent against what the playground will load.
 type ActionInput struct {
-	Kind string `json:"kind" jsonschema:"one of: produce, kill_broker, restart_broker, add_broker, remove_broker, add_producer, remove_producer, add_group, remove_group, add_consumer, add_share_group, config_change, reassign_partition, change_replication_factor, set_replica_speed, tier_offload, kill_sr, restart_sr, sr_failover, restart_producer, set_sr_eligibility, stop_coordinator_db, start_coordinator_db, stop_etcd, start_etcd, stop_object_storage, slow_object_storage, start_object_storage"`
+	Kind string `json:"kind" jsonschema:"one of: produce, kill_broker, restart_broker, add_broker, remove_broker, add_producer, remove_producer, add_group, remove_group, add_consumer, add_share_group, config_change, reassign_partition, change_replication_factor, set_replica_speed, tier_offload, kill_sr, restart_sr, sr_failover, restart_producer, set_sr_eligibility, stop_coordinator_db, start_coordinator_db, stop_etcd, start_etcd, stop_object_storage, slow_object_storage, start_object_storage, pause_broker, resume_broker"`
 	At   int    `json:"at" jsonschema:"simulation time in milliseconds at which the action fires; actions are replayed sorted by this value (>= 0). Space actions ~1000ms apart so the playground animates them one at a time"`
 
-	BrokerID string `json:"brokerId,omitempty" jsonschema:"broker id, e.g. broker-2 (kill_broker, restart_broker, add_broker, remove_broker, set_replica_speed). The default free-play cluster names brokers broker-1..broker-N"`
+	BrokerID string `json:"brokerId,omitempty" jsonschema:"broker id, e.g. broker-2 (kill_broker, restart_broker, add_broker, remove_broker, set_replica_speed, pause_broker, resume_broker). The default free-play cluster names brokers broker-1..broker-N"`
 	Graceful bool   `json:"graceful,omitempty" jsonschema:"kill_broker only: true for a graceful shutdown, false/omitted for a hard kill"`
 	Rack     string `json:"rack,omitempty" jsonschema:"add_broker only: optional rack to pin placement"`
 
@@ -245,8 +245,9 @@ func toEntry(i int, a ActionInput) (actionlog.Entry, error) {
 			return fail("missing required field \"eligible\" (true = may lead, false = follower-only)")
 		}
 		action = actionlog.SetSREligibility{InstanceID: a.InstanceID, Eligible: *a.Eligible}
-	// v2.3 diskless control planes. No fields: they act on the cluster's one
-	// PostgreSQL (inkless-3az) or etcd (kafscale-3b) and are a no-op elsewhere.
+	// v2.2 diskless control planes. No fields: they act on the cluster's one
+	// PostgreSQL (inkless-3az) or etcd (kafscale-3b, kafscale-2-3b) and are a
+	// no-op elsewhere.
 	case "stop_coordinator_db":
 		action = actionlog.StopCoordinatorDB{}
 	case "start_coordinator_db":
@@ -255,7 +256,7 @@ func toEntry(i int, a ActionInput) (actionlog.Entry, error) {
 		action = actionlog.StopEtcd{}
 	case "start_etcd":
 		action = actionlog.StartEtcd{}
-	// v2.3 diskless object storage. No fields: they act on the bucket of every
+	// v2.2 diskless object storage. No fields: they act on the bucket of every
 	// diskless implementation and are a no-op without diskless topics.
 	case "stop_object_storage":
 		action = actionlog.StopObjectStorage{}
@@ -263,10 +264,22 @@ func toEntry(i int, a ActionInput) (actionlog.Entry, error) {
 		action = actionlog.SlowObjectStorage{}
 	case "start_object_storage":
 		action = actionlog.StartObjectStorage{}
+	// v2.2 KafScale broker pause / resume (SIGSTOP / SIGCONT): a no-op on any
+	// cluster other than kafscale-3b and kafscale-2-3b.
+	case "pause_broker":
+		if err := need("brokerId", a.BrokerID); err != nil {
+			return actionlog.Entry{}, err
+		}
+		action = actionlog.PauseBroker{BrokerID: a.BrokerID}
+	case "resume_broker":
+		if err := need("brokerId", a.BrokerID); err != nil {
+			return actionlog.Entry{}, err
+		}
+		action = actionlog.ResumeBroker{BrokerID: a.BrokerID}
 	case "":
 		return fail("missing required field \"kind\"")
 	default:
-		return fail("unknown kind; expected one of produce, kill_broker, restart_broker, add_broker, remove_broker, add_producer, remove_producer, add_group, remove_group, add_consumer, add_share_group, config_change, reassign_partition, change_replication_factor, set_replica_speed, tier_offload, kill_sr, restart_sr, sr_failover, restart_producer, set_sr_eligibility, stop_coordinator_db, start_coordinator_db, stop_etcd, start_etcd, stop_object_storage, slow_object_storage, start_object_storage")
+		return fail("unknown kind; expected one of produce, kill_broker, restart_broker, add_broker, remove_broker, add_producer, remove_producer, add_group, remove_group, add_consumer, add_share_group, config_change, reassign_partition, change_replication_factor, set_replica_speed, tier_offload, kill_sr, restart_sr, sr_failover, restart_producer, set_sr_eligibility, stop_coordinator_db, start_coordinator_db, stop_etcd, start_etcd, stop_object_storage, slow_object_storage, start_object_storage, pause_broker, resume_broker")
 	}
 
 	e := actionlog.Entry{At: a.At, Action: action}
@@ -416,6 +429,12 @@ func fromEntry(e actionlog.Entry) ActionInput {
 		out.Kind = "slow_object_storage"
 	case actionlog.StartObjectStorage:
 		out.Kind = "start_object_storage"
+	case actionlog.PauseBroker:
+		out.Kind = "pause_broker"
+		out.BrokerID = a.BrokerID
+	case actionlog.ResumeBroker:
+		out.Kind = "resume_broker"
+		out.BrokerID = a.BrokerID
 	}
 	return out
 }

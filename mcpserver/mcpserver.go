@@ -55,7 +55,7 @@ func New(opts Options) *mcp.Server {
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "build_playground_url",
-		Description: `Build a monedula.dev kafka-simulator free-play playground URL from a declarative description: an optional cluster topology + shape (brokers, topics, an optional Schema Registry) and an ordered list of timed actions (produce records, kill/restart brokers, add producers/consumer groups/share groups, whitelisted config changes, partition reassignment, replication-factor changes, tiered-storage offload, replica throttling, and - v2.2 preview - Schema Registry failures: kill/restart an SR instance, SR failover, SR leader eligibility, restarting a producer with an empty schema cache or the next schema version, and - v2.3 - stopping and starting the control plane of a diskless implementation preset: PostgreSQL on inkless-3az, etcd on kafscale-3b, and stopping, slowing and starting the object storage of any diskless cluster).
+		Description: `Build a monedula.dev kafka-simulator free-play playground URL from a declarative description: an optional cluster topology + shape (brokers, topics, an optional Schema Registry) and an ordered list of timed actions (produce records, kill/restart brokers, add producers/consumer groups/share groups, whitelisted config changes, partition reassignment, replication-factor changes, tiered-storage offload, replica throttling, and - v2.2 preview - Schema Registry failures: kill/restart an SR instance, SR failover, SR leader eligibility, restarting a producer with an empty schema cache or the next schema version, and - v2.2 - stopping and starting the control plane of a diskless implementation preset: PostgreSQL on inkless-3az, etcd on kafscale-3b and kafscale-2-3b, pausing and resuming a KafScale broker, and stopping, slowing and starting the object storage of any diskless cluster).
 
 The link opens a live, animated sandbox that replays the actions on the described cluster. Every input is validated against the playground's URL grammar before a URL is returned (the playground itself silently DROPS anything malformed, so validation errors here name the offending field instead). The response echoes the action list decoded back out of the generated URL — confirm it matches your intent.
 
@@ -64,7 +64,7 @@ Defaults when omitted: single-dc topology, 3 brokers (broker-1..broker-3), topic
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "open_scenario",
-		Description: `Build the URL that opens one of the playground's curated, scripted walkthrough scenarios, paused on its first step. Input is the scenario id in dotted form, e.g. "00.1.3" (track 00, module 1, scenario 3); tracks range 00 (Kafka anatomy) through 13 (ops from the terminal). The id is validated for format only — an id the deployed release does not include falls back gracefully in the playground.`,
+		Description: `Build the URL that opens one of the playground's curated, scripted walkthrough scenarios, paused on its first step. Input is the scenario id in dotted form, e.g. "00.1.3" (track 00, module 1, scenario 3); tracks range 00 (Kafka anatomy) through 26 (authorization); track 08 is KafScale, 08.1.x on KafScale 1.6.3 and 08.2.x on KafScale 2.0 (preview). The id is validated for format only — an id the deployed release does not include falls back gracefully in the playground.`,
 	}, openScenarioHandler(base))
 
 	mcp.AddTool(srv, &mcp.Tool{
@@ -91,7 +91,7 @@ Returns the URL, the size param, the real→simulator broker/topic name tables, 
 
 // BuildPlaygroundURLInput describes the free-play session to encode.
 type BuildPlaygroundURLInput struct {
-	Cluster string        `json:"cluster,omitempty" jsonschema:"free-play topology: single-dc (default), active-passive, active-active, stretched-2-5, stretched-3, diskless-3az (v2.0+, KIP-1163 draft), or a diskless implementation (v2.3): inkless-3az (Aiven Inkless), kafscale-3b (KafScale) or automq-3az (AutoMQ)"`
+	Cluster string        `json:"cluster,omitempty" jsonschema:"free-play topology: single-dc (default), active-passive, active-active, stretched-2-5, stretched-3, diskless-3az (v2.0+, KIP-1163 draft), or a diskless implementation (v2.2): inkless-3az (Aiven Inkless), kafscale-3b (KafScale 1.6.3), kafscale-2-3b (KafScale 2.0 preview: lease fencing and a proxy with a 60 s etcd cache TTL) or automq-3az (AutoMQ)"`
 	Shape   *ClusterShape `json:"shape,omitempty" jsonschema:"starting cluster shape (brokers, topics, Schema Registry). Omit for the topology default. Not supported for stretched-2-5"`
 	Actions []ActionInput `json:"actions,omitempty" jsonschema:"ordered list of timed actions to replay on the starting cluster (may be empty to just open the cluster)"`
 }

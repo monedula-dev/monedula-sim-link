@@ -253,6 +253,8 @@ func (m *mulberry32) genAction() Action {
 		func() Action { return StopObjectStorage{} },
 		func() Action { return SlowObjectStorage{} },
 		func() Action { return StartObjectStorage{} },
+		func() Action { return PauseBroker{BrokerID: m.safeID()} },
+		func() Action { return ResumeBroker{BrokerID: m.safeID()} },
 		func() Action {
 			// elect_preferred_leaders: topicless (all-topic-partitions, "*") or scoped.
 			if m.boolean() {

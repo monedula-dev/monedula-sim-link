@@ -398,6 +398,17 @@ func TestOpenScenario(t *testing.T) {
 		t.Errorf("URL: got %q want %q", out.URL, want)
 	}
 
+	// The KafScale scenarios of simulator v2.2: a paused 1.6.3 broker (08.1.5)
+	// and the KafScale 2.0 (preview) module 08.2.1-08.2.7.
+	for _, id := range []string{"08.1.5", "08.2.1", "08.2.2", "08.2.3", "08.2.4", "08.2.5", "08.2.6", "08.2.7"} {
+		res := callTool(t, s, "open_scenario", map[string]any{"scenarioId": id})
+		var out OpenScenarioOutput
+		structured(t, res, &out)
+		if want := simurl.DefaultBaseURL + "?scenario=" + id; out.URL != want || out.ScenarioID != id {
+			t.Errorf("%s: URL %q id %q, want %q", id, out.URL, out.ScenarioID, want)
+		}
+	}
+
 	for _, bad := range []string{"", "0.1", "free", "00.1.3.4", "abc"} {
 		res := callTool(t, s, "open_scenario", map[string]any{"scenarioId": bad})
 		if !res.IsError {
@@ -594,8 +605,9 @@ func TestValidateActionsSchemaRegistry(t *testing.T) {
 	}
 }
 
-// TestBuildURLDisklessControlPlanes builds the v2.3 control-plane sessions end
-// to end: PostgreSQL stopped and started on inkless-3az, etcd on kafscale-3b,
+// TestBuildURLDisklessControlPlanes builds the v2.2 control-plane sessions end
+// to end: PostgreSQL stopped and started on inkless-3az, etcd on kafscale-3b
+// and kafscale-2-3b,
 // with the playground's own DB/ET codes in the URL and the kinds echoed back.
 func TestBuildURLDisklessControlPlanes(t *testing.T) {
 	s := newSession(t)
@@ -607,6 +619,7 @@ func TestBuildURLDisklessControlPlanes(t *testing.T) {
 	}{
 		{"inkless-3az", "stop_coordinator_db", "start_coordinator_db", "DB:0@2400,DB:1@6000"},
 		{"kafscale-3b", "stop_etcd", "start_etcd", "ET:0@2400,ET:1@6000"},
+		{"kafscale-2-3b", "stop_etcd", "start_etcd", "ET:0@2400,ET:1@6000"},
 	} {
 		res := callTool(t, s, "build_playground_url", map[string]any{
 			"cluster": c.cluster,
@@ -636,13 +649,13 @@ func TestBuildURLDisklessControlPlanes(t *testing.T) {
 	}}), "replication factor 1")
 }
 
-// TestBuildURLObjectStorage builds the v2.3 object storage actions end to end
+// TestBuildURLObjectStorage builds the v2.2 object storage actions end to end
 // on every diskless implementation preset (and the KIP draft's diskless-3az):
 // the bucket stopped, slowed and started, with the playground's own OS codes in
 // the URL and the kinds echoed back.
 func TestBuildURLObjectStorage(t *testing.T) {
 	s := newSession(t)
-	for _, cluster := range []string{"diskless-3az", "inkless-3az", "kafscale-3b", "automq-3az"} {
+	for _, cluster := range []string{"diskless-3az", "inkless-3az", "kafscale-3b", "kafscale-2-3b", "automq-3az"} {
 		res := callTool(t, s, "build_playground_url", map[string]any{
 			"cluster": cluster,
 			"actions": []map[string]any{
@@ -675,5 +688,52 @@ func TestBuildURLObjectStorage(t *testing.T) {
 	}
 	if out.Entries[1].Kind != "slow_object_storage" {
 		t.Errorf("OS:s previewed as %+v, want slow_object_storage", out.Entries[1])
+	}
+}
+
+// TestBuildURLPauseBroker builds the v2.2 KafScale broker pause end to end on
+// both KafScale presets: broker-2 paused and resumed, with the playground's own
+// BP/BU codes in the URL and the kinds echoed back with their broker id.
+func TestBuildURLPauseBroker(t *testing.T) {
+	s := newSession(t)
+	for _, cluster := range []string{"kafscale-3b", "kafscale-2-3b"} {
+		res := callTool(t, s, "build_playground_url", map[string]any{
+			"cluster": cluster,
+			"actions": []map[string]any{
+				{"kind": "pause_broker", "at": 1500, "brokerId": "broker-2"},
+				{"kind": "resume_broker", "at": 13500, "brokerId": "broker-2"},
+			},
+		})
+		var out BuildPlaygroundURLOutput
+		structured(t, res, &out)
+		if out.Cluster != cluster || out.Size != "" {
+			t.Errorf("%s: cluster %q size %q, want the preset default", cluster, out.Cluster, out.Size)
+		}
+		if got, want := actionsParamOf(t, out.URL), "BP:broker-2@1500,BU:broker-2@13500"; got != want {
+			t.Errorf("%s: URL actions param %q, want %q", cluster, got, want)
+		}
+		if len(out.DecodedActions) != 2 ||
+			out.DecodedActions[0].Kind != "pause_broker" || out.DecodedActions[0].BrokerID != "broker-2" ||
+			out.DecodedActions[1].Kind != "resume_broker" || out.DecodedActions[1].BrokerID != "broker-2" {
+			t.Errorf("%s: echoed %+v", cluster, out.DecodedActions)
+		}
+	}
+
+	// The broker id is required.
+	for _, kind := range []string{"pause_broker", "resume_broker"} {
+		wantToolError(t, callTool(t, s, "build_playground_url", map[string]any{
+			"cluster": "kafscale-2-3b",
+			"actions": []map[string]any{{"kind": kind, "at": 1000}},
+		}), "brokerId")
+	}
+
+	res := callTool(t, s, "validate_actions", map[string]any{"actions": "BP:broker-1@1000,BU:@2000,BU:broker-1@3000"})
+	var out ValidateActionsOutput
+	structured(t, res, &out)
+	if len(out.Entries) != 2 || len(out.Dropped) != 1 || !strings.HasPrefix(out.Dropped[0].Entry, "BU:@") {
+		t.Fatalf("entries %+v dropped %+v, want 2 kept and BU:@2000 dropped", out.Entries, out.Dropped)
+	}
+	if out.Entries[0].Kind != "pause_broker" || out.Entries[1].Kind != "resume_broker" || out.Entries[1].BrokerID != "broker-1" {
+		t.Errorf("previewed %+v", out.Entries)
 	}
 }

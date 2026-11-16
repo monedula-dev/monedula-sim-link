@@ -81,6 +81,17 @@ func decodeAction(kind, payload string) (Action, error) {
 			return StartObjectStorage{}, nil
 		}
 		return nil, fmt.Errorf("object storage: expected 0 (stop), s (slow) or 1 (start), got %q", payload)
+	case "BP":
+		// The playground drops an entry with an empty broker id.
+		if payload == "" {
+			return nil, fmt.Errorf("pause_broker: empty broker id")
+		}
+		return PauseBroker{BrokerID: payload}, nil
+	case "BU":
+		if payload == "" {
+			return nil, fmt.Errorf("resume_broker: empty broker id")
+		}
+		return ResumeBroker{BrokerID: payload}, nil
 	default:
 		return nil, fmt.Errorf("unsupported kind %q", kind)
 	}
