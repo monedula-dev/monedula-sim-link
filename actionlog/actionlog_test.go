@@ -79,6 +79,7 @@ func TestRoundTripEachKind(t *testing.T) {
 		"coordinator db":       {{At: 100, Action: StopCoordinatorDB{}}, {At: 200, Action: StartCoordinatorDB{}}},
 		"etcd":                 {{At: 100, Action: StopEtcd{}}, {At: 200, Action: StartEtcd{}}},
 		"object storage":       {{At: 100, Action: StopObjectStorage{}}, {At: 200, Action: SlowObjectStorage{}}, {At: 300, Action: StartObjectStorage{}}},
+		"pause broker":         {{At: 100, Action: PauseBroker{BrokerID: "broker-2"}}, {At: 200, Action: ResumeBroker{BrokerID: "broker-2"}}},
 	}
 	for name, entries := range cases {
 		t.Run(name, func(t *testing.T) { roundTrip(t, entries) })
@@ -262,6 +263,8 @@ func TestDecodeRejectsMalformed(t *testing.T) {
 		"OS:2@100",            // object storage state is 0, s or 1
 		"OS:S@100",            // slow is lower-case s only
 		"OS:@100",             // empty object storage state
+		"BP:@100",             // empty paused broker id
+		"BU:@100",             // empty resumed broker id
 	}
 	for _, raw := range bad {
 		if _, err := Decode(raw); err == nil {
@@ -315,7 +318,8 @@ func randomAction(rng *rand.Rand) Action {
 			SetSREligibility{InstanceID: id("sr"), Eligible: rng.Intn(2) == 0})
 	case 12:
 		return pickAction(rng, StopCoordinatorDB{}, StartCoordinatorDB{}, StopEtcd{}, StartEtcd{},
-			StopObjectStorage{}, SlowObjectStorage{}, StartObjectStorage{})
+			StopObjectStorage{}, SlowObjectStorage{}, StartObjectStorage{},
+			PauseBroker{BrokerID: id("b")}, ResumeBroker{BrokerID: id("b")})
 	default:
 		return produceRandom(rng, id)
 	}
@@ -430,9 +434,10 @@ func TestRestartProducerDecodesLikePlayground(t *testing.T) {
 	}
 }
 
-// TestDisklessControlPlaneWire pins the v2.3 control-plane kinds to the
+// TestDisklessControlPlaneWire pins the v2.2 control-plane kinds to the
 // playground's own encoder output (actionLog.ts encodeOne): DB and ET carry the
-// target state, 0 = stop, 1 = start, and OS adds s = slow.
+// target state, 0 = stop, 1 = start, OS adds s = slow, and the KafScale broker
+// pause / resume carry the broker id like K and R.
 func TestDisklessControlPlaneWire(t *testing.T) {
 	cases := []struct {
 		entry Entry
@@ -445,6 +450,9 @@ func TestDisklessControlPlaneWire(t *testing.T) {
 		{Entry{At: 2000, Action: StopObjectStorage{}}, "OS:0@2000"},
 		{Entry{At: 3000, Action: SlowObjectStorage{}}, "OS:s@3000"},
 		{Entry{At: 8000, Action: StartObjectStorage{}}, "OS:1@8000"},
+		// Scenarios 08.1.5 and 08.2.7 pause broker-2 at 1500.
+		{Entry{At: 1500, Action: PauseBroker{BrokerID: "broker-2"}}, "BP:broker-2@1500"},
+		{Entry{At: 9000, Action: ResumeBroker{BrokerID: "broker-2"}}, "BU:broker-2@9000"},
 	}
 	for _, c := range cases {
 		got, err := EncodeEntry(c.entry)
