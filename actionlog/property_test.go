@@ -255,6 +255,14 @@ func (m *mulberry32) genAction() Action {
 		func() Action { return StartObjectStorage{} },
 		func() Action { return PauseBroker{BrokerID: m.safeID()} },
 		func() Action { return ResumeBroker{BrokerID: m.safeID()} },
+		// Streamhouse (v3.0, next): ids are escaped like a produce value, so a
+		// hostile value must survive too.
+		func() Action { return KillConnectWorker{WorkerID: m.hostileValue() + "w"} },
+		func() Action { return RestartConnectWorker{WorkerID: m.safeID()} },
+		func() Action { return RestartConnector{Name: m.hostileValue() + "c"} },
+		func() Action {
+			return IcebergOp{Request: `{"op":"set_properties","table":"` + m.safeID() + `","updates":{"k":"` + m.safeID() + `"},"removals":[]}`}
+		},
 		func() Action {
 			// elect_preferred_leaders: topicless (all-topic-partitions, "*") or scoped.
 			if m.boolean() {

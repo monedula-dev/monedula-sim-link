@@ -3,6 +3,7 @@ package actionlog
 import (
 	"math/rand"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -80,6 +81,8 @@ func TestRoundTripEachKind(t *testing.T) {
 		"etcd":                 {{At: 100, Action: StopEtcd{}}, {At: 200, Action: StartEtcd{}}},
 		"object storage":       {{At: 100, Action: StopObjectStorage{}}, {At: 200, Action: SlowObjectStorage{}}, {At: 300, Action: StartObjectStorage{}}},
 		"pause broker":         {{At: 100, Action: PauseBroker{BrokerID: "broker-2"}}, {At: 200, Action: ResumeBroker{BrokerID: "broker-2"}}},
+		"connect":              {{At: 100, Action: KillConnectWorker{WorkerID: "connect-1"}}, {At: 200, Action: RestartConnectWorker{WorkerID: "connect-1"}}, {At: 300, Action: RestartConnector{Name: "orders-sink"}}},
+		"iceberg_op":           {{At: 100, Action: IcebergOp{Request: `{"op":"catalog_down"}`}}, {At: 200, Action: IcebergOp{Request: `{"op":"catalog_up"}`}}},
 	}
 	for name, entries := range cases {
 		t.Run(name, func(t *testing.T) { roundTrip(t, entries) })
@@ -319,7 +322,9 @@ func randomAction(rng *rand.Rand) Action {
 	case 12:
 		return pickAction(rng, StopCoordinatorDB{}, StartCoordinatorDB{}, StopEtcd{}, StartEtcd{},
 			StopObjectStorage{}, SlowObjectStorage{}, StartObjectStorage{},
-			PauseBroker{BrokerID: id("b")}, ResumeBroker{BrokerID: id("b")})
+			PauseBroker{BrokerID: id("b")}, ResumeBroker{BrokerID: id("b")},
+			KillConnectWorker{WorkerID: id("connect-")}, RestartConnectWorker{WorkerID: id("connect-")},
+			RestartConnector{Name: id("sink-")}, IcebergOp{Request: `{"op":"rollback","table":"` + id("t") + `","snapshotId":` + strconv.Itoa(rng.Intn(9)) + `}`})
 	default:
 		return produceRandom(rng, id)
 	}

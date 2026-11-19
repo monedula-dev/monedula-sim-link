@@ -34,7 +34,23 @@ type ClusterShape struct {
 	// SchemaRegistry turns the session's schema registry on (size tail index
 	// 14). Mirrors FreePlaySize.schemaRegistry / srInstancesPerDc /
 	// srFollowerOnlyDcs in freePlayTopologies.ts.
-	SchemaRegistry *SchemaRegistryShape `json:"schemaRegistry,omitempty" jsonschema:"optional Schema Registry for the session: a <topic>-value subject per topic, seeded at v1 with backward compatibility. Present ({}) = the registry with no SR instances; instancesPerDc (v2.2 preview) adds SR instances the SR actions (kill_sr, restart_sr, set_sr_eligibility, sr_failover) act on"`
+	SchemaRegistry *SchemaRegistryShape `json:"schemaRegistry,omitempty" jsonschema:"optional Schema Registry for the session: a <topic>-value subject per topic, seeded at v1 with backward compatibility. Present ({}) = the registry with no SR instances; instancesPerDc (v2.2 preview) adds SR instances the SR actions (kill_sr, restart_sr, set_sr_eligibility, sr_failover) act on. The streamhouse preset always has the registry: omitted there means the preset's (no instances)"`
+	// ConnectSink is the Streamhouse preset's Iceberg sink (size tail index
+	// 18; v3.0, release stage next). Mirrors FreePlaySize.streamhouse /
+	// StreamhouseSinkSize in freePlayTopologies.ts.
+	ConnectSink *ConnectSinkShape `json:"connectSink,omitempty" jsonschema:"streamhouse only (v3.0, next): the Kafka Connect Iceberg sink orders-sink. Omitted fields keep the preset's value: 2 workers, tasksMax 2, commit interval 2000 ms, commit timeout 6000 ms, schema evolution on"`
+}
+
+// ConnectSinkShape is the Streamhouse sink's editable knobs, by the real
+// connector keys. Each field is optional (unset = the preset's value) and is
+// validated against the playground's clamp instead of being clamped, so a
+// link never loads a different sink from the one asked for.
+type ConnectSinkShape struct {
+	Workers          *int  `json:"workers,omitempty" jsonschema:"Kafka Connect workers, 1-4 (preset 2), named connect-1..connect-<n>"`
+	TasksMax         *int  `json:"tasksMax,omitempty" jsonschema:"the connector's tasks.max, from 1 to the partitions of the source topic orders (preset 2)"`
+	CommitIntervalMs *int  `json:"commitIntervalMs,omitempty" jsonschema:"iceberg.control.commit.interval-ms, 1000-30000 in steps of 500 (preset 2000)"`
+	CommitTimeoutMs  *int  `json:"commitTimeoutMs,omitempty" jsonschema:"iceberg.control.commit.timeout-ms, 2000-60000 in steps of 500 (preset 6000); may be below the interval"`
+	EvolveSchema     *bool `json:"evolveSchema,omitempty" jsonschema:"iceberg.tables.evolve-schema-enabled (preset true)"`
 }
 
 // SchemaRegistryShape is the free-play schema registry. With no instances it
@@ -95,10 +111,18 @@ type topology struct {
 	// TEMPLATES[type].disklessImpl): "" for the KIP-1163 draft and the classic
 	// topologies, else "inkless", "kafscale" or "automq".
 	impl string
+	// sink is true for the Streamhouse preset (v3.0, next; freePlayHasSink):
+	// the Iceberg Connect sink on `orders`, a Schema Registry from the
+	// template, classic topics only, and the sink knobs in tail index 18.
+	sink bool
+	// reservedTopics are internal topic names an extra topic may not take
+	// (reservedTopicNames: the sink's control topic). The playground renames
+	// such a topic, so the shape refuses it.
+	reservedTopics []string
 }
 
 // topologyOrder lists the topologies in the playground's own order, for errors.
-var topologyOrder = []string{"single-dc", "active-passive", "active-active", "stretched-2-5", "stretched-3", "diskless-3az", "inkless-3az", "kafscale-3b", "kafscale-2-3b", "automq-3az"}
+var topologyOrder = []string{"single-dc", "active-passive", "active-active", "stretched-2-5", "stretched-3", "diskless-3az", "inkless-3az", "kafscale-3b", "kafscale-2-3b", "automq-3az", "streamhouse"}
 
 // allDiskless mirrors primaryDisklessByConstruction in freePlayTopologies.ts:
 // KafScale and AutoMQ have no classic topics, so every topic is diskless and
@@ -149,6 +173,12 @@ var topologies = map[string]topology{
 	// automq-3az: three brokers on AutoMQ cycling racks az-a/b/c, every topic
 	// S3-backed at RF 1 behind a per-broker WAL; six partitions by default.
 	"automq-3az": {slug: "automq-3az", zones: []string{"single"}, defaultBrokers: []int{3}, defaultPartitions: 6, defaultRF: 1, brokerCap: 9, partitionCap: 6, impl: "automq"},
+	// v3.0 Streamhouse (release stage next): a classic single cluster with a
+	// Schema Registry, Kafka Connect and Apache Iceberg's sink connector
+	// orders-sink writing `orders` to the Iceberg table `orders`. It has the
+	// shared multi-DC caps (9 brokers, 6 partitions): the playground's larger
+	// caps key on the exact type single-dc.
+	"streamhouse": {slug: "streamhouse", zones: []string{"single"}, defaultBrokers: []int{3}, defaultPartitions: 3, defaultRF: 3, brokerCap: 9, partitionCap: 6, sink: true, reservedTopics: []string{"control-iceberg"}},
 }
 
 // rfMax is §12's rfMaxFor: the broker set a single RF must fit into.
@@ -271,6 +301,10 @@ func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam
 	for _, n := range topo.fixedTopics {
 		fixed[n] = true
 	}
+	reserved := map[string]bool{}
+	for _, n := range topo.reservedTopics {
+		reserved[n] = true
+	}
 	for i, t := range shape.Topics {
 		if !topicNameRe.MatchString(t.Name) {
 			return "", "", nil, fmt.Errorf("shape.topics[%d].name %q: must match [A-Za-z0-9._-], at most 40 chars", i, t.Name)
@@ -285,6 +319,9 @@ func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam
 		}
 		if fixed[t.Name] {
 			return "", "", nil, fmt.Errorf("shape.topics[%d].name %q: cluster %q already has a topic of that name (the playground would rename yours)", i, t.Name, cluster)
+		}
+		if reserved[t.Name] {
+			return "", "", nil, fmt.Errorf("shape.topics[%d].name %q: an internal topic on cluster %q (the Iceberg sink's control topic; the playground would rename yours)", i, t.Name, cluster)
 		}
 		if seen[t.Name] {
 			return "", "", nil, fmt.Errorf("shape.topics[%d].name %q: duplicate topic name (the playground would rename it)", i, t.Name)
@@ -340,8 +377,22 @@ func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam
 		return "", "", nil, fmt.Errorf("shape.disklessTiming: %w", err)
 	}
 
+	// --- Streamhouse sink (v3.0, next) -----------------------------------
+	sinkEnc, sinkNotes, err := encodeConnectSink(topo, shape.ConnectSink, partitions)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("shape.connectSink: %w", err)
+	}
+	notes = append(notes, sinkNotes...)
+
 	// --- schema registry --------------------------------------------------
-	srEnc, srNotes, err := encodeSchemaRegistry(topo, shape.SchemaRegistry)
+	// The Streamhouse template carries a registry, but a slug without tail
+	// index 14 decodes as "no registry" there too, so every slug the tool
+	// writes for it carries at least the abstract registry ("1").
+	sr := shape.SchemaRegistry
+	if sr == nil && topo.sink {
+		sr = &SchemaRegistryShape{}
+	}
+	srEnc, srNotes, err := encodeSchemaRegistry(topo, sr)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("shape.schemaRegistry: %w", err)
 	}
@@ -381,6 +432,9 @@ func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam
 	if disklessEnc := mapping.EncodeDisklessTail(primaryDiskless, commitMs, uploadMs); disklessEnc != "" {
 		tail[17] = disklessEnc
 	}
+	if sinkEnc != "" {
+		tail[18] = sinkEnc
+	}
 
 	slug := base
 	if len(tail) > 0 {
@@ -390,10 +444,12 @@ func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam
 				maxIdx = i
 			}
 		}
-		// Accepted tail lengths (§11.3): 1, 3, 5, 7, 8, 10, 11, …, 17, 18 - the
-		// index-17 diskless field needs the full 18-segment tail (index 17 is
-		// the slug's 18th element), which "17" alone cannot hold.
-		accepted := []int{1, 3, 5, 7, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18}
+		// Accepted tail lengths (§11.3): 1, 3, 5, 7, 8, 10, 11, …, 17, 18, 19 -
+		// the index-17 diskless field needs the full 18-segment tail (index 17
+		// is the slug's 18th element), which "17" alone cannot hold. 19 (the
+		// Streamhouse sink, index 18) is accepted on cluster streamhouse only,
+		// the one topology that writes index 18.
+		accepted := []int{1, 3, 5, 7, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19}
 		length := 0
 		for _, l := range accepted {
 			if l >= maxIdx+1 {
@@ -414,6 +470,10 @@ func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam
 		defParts[i] = strconv.Itoa(b)
 	}
 	defaultBase := strings.Join(defParts, "-") + "x" + strconv.Itoa(topo.defaultPartitions) + "x" + strconv.Itoa(topo.defaultRF)
+	if topo.sink {
+		// The Streamhouse default includes the preset's registry (index 14).
+		defaultBase += strings.Repeat("x", 15) + "1"
+	}
 	if slug == defaultBase {
 		return clusterParam, "", notes, nil
 	}
@@ -504,6 +564,11 @@ func validateTopicConfig(topo topology, t TopicShape, isPrimary bool) error {
 		return nil
 	}
 	if t.DisklessEnable {
+		// D5: the Iceberg sink runs on classic topics only, so the playground
+		// drops the flag on Streamhouse (disklessAllowed).
+		if topo.sink {
+			return fmt.Errorf("disklessEnable: not available on %s, where the Iceberg sink runs on classic topics only (v3.0, next)", topo.slug)
+		}
 		if isPrimary && topo.impl == "inkless" {
 			return fmt.Errorf("disklessEnable: on %s the primary 'orders' stays a classic topic next to the diskless 'clicks'; make an extra topic diskless instead", topo.slug)
 		}
@@ -663,4 +728,75 @@ func srInstanceIDs(topo topology, perDc int) []string {
 		}
 	}
 	return ids
+}
+
+// The Streamhouse sink's preset values and limits (DEFAULT_STREAMHOUSE_SINK and
+// STREAMHOUSE_SINK_LIMITS in freePlayTopologies.ts).
+const (
+	sinkDefaultWorkers    = 2
+	sinkDefaultTasksMax   = 2
+	sinkDefaultIntervalMs = 2000
+	sinkDefaultTimeoutMs  = 6000
+	sinkMaxWorkers        = 4
+	sinkStepMs            = 500
+)
+
+// encodeConnectSink renders size tail index 18 (v3.0, next) the way
+// encodeStreamhouseSink does: "<workers>.<tasksMax>.<commitIntervalMs>.
+// <commitTimeoutMs>.<1|0>", or "" when the sink equals the preset's (the
+// playground then writes nothing). It validates against clampStreamhouseSink
+// instead of clamping: workers 1-4, tasksMax 1 to the primary topic's
+// partitions, the interval 1000-30000 and the timeout 2000-60000, both in
+// steps of 500.
+//
+// An unset tasksMax is the preset's 2, lowered to the partitions of orders
+// when it has fewer, as the playground's clamp does. On a 1-partition orders
+// that makes the sink differ from the preset's, so the segment is written
+// even when the shape names no sink field: the playground itself rewrites
+// "3x1x3...x1" to "3x1x3...x1xxxx2.1.2000.6000.1".
+func encodeConnectSink(topo topology, cs *ConnectSinkShape, partitions int) (string, []string, error) {
+	if !topo.sink {
+		if cs != nil {
+			return "", nil, fmt.Errorf("cluster %q has no Kafka Connect sink; connectSink applies to streamhouse only (v3.0, next)", topo.slug)
+		}
+		return "", nil, nil
+	}
+	if cs == nil {
+		cs = &ConnectSinkShape{}
+	}
+	val := func(p *int, def int) int {
+		if p == nil {
+			return def
+		}
+		return *p
+	}
+	var notes []string
+	workers := val(cs.Workers, sinkDefaultWorkers)
+	tasks := val(cs.TasksMax, min(sinkDefaultTasksMax, partitions))
+	if cs.TasksMax == nil && partitions < sinkDefaultTasksMax {
+		notes = append(notes, fmt.Sprintf("connectSink: tasksMax lowered to %d to fit the %d-partition source topic orders", tasks, partitions))
+	}
+	interval := val(cs.CommitIntervalMs, sinkDefaultIntervalMs)
+	timeout := val(cs.CommitTimeoutMs, sinkDefaultTimeoutMs)
+	evolve := cs.EvolveSchema == nil || *cs.EvolveSchema
+	if workers < 1 || workers > sinkMaxWorkers {
+		return "", nil, fmt.Errorf("workers %d must be within 1..%d", workers, sinkMaxWorkers)
+	}
+	if tasks < 1 || tasks > partitions {
+		return "", nil, fmt.Errorf("tasksMax %d must be within 1..%d (the partitions of the source topic orders)", tasks, partitions)
+	}
+	if interval < 1000 || interval > 30000 || interval%sinkStepMs != 0 {
+		return "", nil, fmt.Errorf("commitIntervalMs %d must be within [1000, 30000] in steps of %d", interval, sinkStepMs)
+	}
+	if timeout < 2000 || timeout > 60000 || timeout%sinkStepMs != 0 {
+		return "", nil, fmt.Errorf("commitTimeoutMs %d must be within [2000, 60000] in steps of %d", timeout, sinkStepMs)
+	}
+	if workers == sinkDefaultWorkers && tasks == sinkDefaultTasksMax && interval == sinkDefaultIntervalMs && timeout == sinkDefaultTimeoutMs && evolve {
+		return "", notes, nil
+	}
+	flag := "0"
+	if evolve {
+		flag = "1"
+	}
+	return fmt.Sprintf("%d.%d.%d.%d.%s", workers, tasks, interval, timeout, flag), notes, nil
 }
