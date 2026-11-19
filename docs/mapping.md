@@ -96,6 +96,9 @@ in `mapping/size_test.go` replays every one of them against `buildSize`.
   indexes are refused rather than clamped. The `SIZE-SR` lines in
   `mapping/testdata/ts-fixtures.txt` pin both the slugs and the instance names
   the simulator builds from them.
+- **Streamhouse sink (tail index 18; v3.0, `next`)**: written only by the MCP
+  declarative shape on `cluster: "streamhouse"` (`ClusterShape.ConnectSink`),
+  the 19-segment tail. See *Streamhouse* below.
 - **RF** per topic is the widest replica list observed across its partitions,
   clamped to the rendered broker count.
 - A literal `x` in a topic name is slug-escaped to `*` (the simulator's
@@ -448,6 +451,78 @@ Any other `OS` payload is an error here; the playground drops it.
 
 A deployment of the playground older than v2.2 falls back to single-dc for
 these `cluster` values and drops the codes.
+
+## Streamhouse: `IO`/`KCW`/`RCW`/`RCN` and the Connect sink (v3.0, `next`)
+
+Simulator v3.0 adds the Streamhouse free-play cluster: a classic Kafka cluster
+with Kafka Connect and Apache Iceberg's sink connector beside it. It is at
+release stage `next`: the public playground does not ship the `streamhouse`
+feature yet, so it opens `cluster=streamhouse` as single-dc and skips the four
+codes below like an unknown kind. sim-link writes and reads them now, from the
+grammar in playground-url-api.md (§2, §10, §11.3; website PR #977).
+
+`connect` never emits any of this. The MCP `build_playground_url` tool takes
+`cluster: "streamhouse"`:
+
+| `cluster` | Default `size` | What it opens |
+|---|---|---|
+| `streamhouse` | `3x3x3` | 3 brokers, `orders` 3 partitions RF 3, a Schema Registry, and 2 Connect workers (`connect-1`, `connect-2`) running the Iceberg sink connector `orders-sink` (`tasks.max` 2, commit interval 2 s, timeout 6 s, schema evolution on) into the Iceberg table `orders` |
+
+The shape takes the shared multi-DC caps (9 brokers, 6 partitions per topic)
+and refuses a diskless topic or timing (the sink runs on classic topics only)
+and an extra topic named `control-iceberg` (the sink's control topic, which the
+playground would rename). `shape.connectSink` sets the sink, size tail index 18
+(the 19th tail segment), `<workers>.<tasksMax>.<commitIntervalMs>.<commitTimeoutMs>.<0|1>`:
+
+| Field | Range | Preset |
+|---|---|---|
+| `workers` | 1-4 | 2 |
+| `tasksMax` | 1 to the partitions of `orders` | 2 |
+| `commitIntervalMs` (`iceberg.control.commit.interval-ms`) | 1000-30000, steps of 500 | 2000 |
+| `commitTimeoutMs` (`iceberg.control.commit.timeout-ms`) | 2000-60000, steps of 500 | 6000 |
+| `evolveSchema` (`iceberg.tables.evolve-schema-enabled`) | `true` / `false` | `true` |
+
+A value outside its range is an error here; the playground would clamp it. A
+sink equal to the preset's adds nothing to the slug, but an unset `tasksMax` on
+a 1-partition `orders` is lowered to 1, as the playground does, and then the
+segment is written (`3x1x3xxxxxxxxxxxxxxx1xxxx2.1.2000.6000.1`).
+
+**The registry.** The preset has a Schema Registry, but a slug without tail
+index 14 decodes without one, so `size=4x3x3` opens Streamhouse with no
+registry. The tool always keeps the preset's registry: every slug it writes for
+`streamhouse` carries at least `1` at index 14 (`4x3x3xxxxxxxxxxxxxxx1`), and
+`shape.schemaRegistry.instancesPerDc` adds SR instances as on any cluster. It
+cannot turn the registry off. The §11.3 example
+`3x3x3xxxxxxxxxxxxxxxxxxx3.3.5000.10000.0` has no registry for that reason; the
+tool writes that sink as `3x3x3xxxxxxxxxxxxxxx1xxxx3.3.5000.10000.0`. The slugs
+are pinned by the `SIZE-SINK` lines in `mapping/testdata/ts-fixtures.txt`,
+dumped from the simulator's own codec.
+
+Four action kinds act on the cluster's Iceberg table and Connect sink. Each
+payload is escaped like a produce value (`~` becomes `~t`, `,` becomes `~c`):
+
+| Action kind | Code | Fields | Notes |
+|---|---|---|---|
+| `iceberg_op` | `IO:<op request as JSON>` | `icebergOp` | one Iceberg table operation, e.g. `{"op":"set_properties","table":"orders","updates":{...},"removals":[]}` |
+| `kill_connect_worker` | `KCW:<workerId>` | `workerId` | the worker dies; its tasks move to the surviving workers after the rebalance delay |
+| `restart_connect_worker` | `RCW:<workerId>` | `workerId` | the worker starts again and rejoins the Connect group |
+| `restart_connector` | `RCN:<name>` | `connectorName` | restarts the sink connector (the preset's is `orders-sink`), for example after it failed |
+
+The `op` of an Iceberg op request is one of `create_table`, `append`, `delete`,
+`update`, `merge`, `equality_delete`, `rewrite_data_files`,
+`rewrite_position_delete_files`, `rewrite_manifests`, `create_tag`,
+`create_branch`, `replace_ref`, `drop_ref`, `fast_forward`, `rollback`,
+`set_current`, `cherrypick`, `expire_snapshots`, `remove_orphan_files`,
+`set_properties`, `upgrade_format`, `update_schema`, `update_spec`,
+`replace_sort_order`, `catalog_down` and `catalog_up`. The playground skips a
+request that does not have exactly the keys and JSON types of its operation,
+so the codec ports that check (`parseIcebergOpRequest`) and refuses such a
+request on encode and on decode. It writes the JSON the way the playground
+writes it back (`JSON.stringify`: no whitespace, the request's key order,
+JavaScript's number form), so a link it decodes re-encodes byte for byte. The
+MCP input `icebergOp` is a JSON object, whose key order does not survive the
+call, so the tool writes its keys sorted. An empty worker id or connector name
+is an error here; the playground drops the entry.
 
 ## Self-validation
 

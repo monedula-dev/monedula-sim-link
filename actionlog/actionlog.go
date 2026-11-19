@@ -4,9 +4,10 @@
 // consumer / share groups, config changes, reassignment, replication factor,
 // replica speed, tiered offload, the v2.2-preview Schema Registry failure
 // kinds, the v2.2 diskless control planes, PostgreSQL and etcd, the v2.2
-// object storage outage kinds and the v2.2 KafScale broker pause / resume) and
-// is a faithful Go port of the TypeScript codec in
-// src/kafka-simulator/actionLog.ts.
+// object storage outage kinds, the v2.2 KafScale broker pause / resume, and
+// the v3.0 Streamhouse kinds at release stage next: Iceberg table operations,
+// Kafka Connect worker kill / restart and connector restart) and is a faithful
+// Go port of the TypeScript codec in src/kafka-simulator/actionLog.ts.
 //
 // The playground decoder is TOLERANT: any entry it cannot parse is dropped
 // SILENTLY. To make generated links safe, this package instead FAILS FAST — the

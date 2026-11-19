@@ -92,6 +92,17 @@ func decodeAction(kind, payload string) (Action, error) {
 			return nil, fmt.Errorf("resume_broker: empty broker id")
 		}
 		return ResumeBroker{BrokerID: payload}, nil
+	// Streamhouse (v3.0, next). The playground skips these in a build without
+	// the streamhouse feature; here they always decode, so a link can be
+	// previewed before that build is public.
+	case "IO":
+		return decodeIcebergOp(payload)
+	case "KCW":
+		return KillConnectWorker{WorkerID: unescapeProduceValue(payload)}, nil
+	case "RCW":
+		return RestartConnectWorker{WorkerID: unescapeProduceValue(payload)}, nil
+	case "RCN":
+		return RestartConnector{Name: unescapeProduceValue(payload)}, nil
 	default:
 		return nil, fmt.Errorf("unsupported kind %q", kind)
 	}

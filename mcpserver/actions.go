@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/monedula-dev/monedula-sim-link/actionlog"
@@ -11,7 +12,7 @@ import (
 // shape is echoed back by the tools after the URL self-decode, so a caller can
 // diff intent against what the playground will load.
 type ActionInput struct {
-	Kind string `json:"kind" jsonschema:"one of: produce, kill_broker, restart_broker, add_broker, remove_broker, add_producer, remove_producer, add_group, remove_group, add_consumer, add_share_group, config_change, reassign_partition, change_replication_factor, set_replica_speed, tier_offload, kill_sr, restart_sr, sr_failover, restart_producer, set_sr_eligibility, stop_coordinator_db, start_coordinator_db, stop_etcd, start_etcd, stop_object_storage, slow_object_storage, start_object_storage, pause_broker, resume_broker"`
+	Kind string `json:"kind" jsonschema:"one of: produce, kill_broker, restart_broker, add_broker, remove_broker, add_producer, remove_producer, add_group, remove_group, add_consumer, add_share_group, config_change, reassign_partition, change_replication_factor, set_replica_speed, tier_offload, kill_sr, restart_sr, sr_failover, restart_producer, set_sr_eligibility, stop_coordinator_db, start_coordinator_db, stop_etcd, start_etcd, stop_object_storage, slow_object_storage, start_object_storage, pause_broker, resume_broker, iceberg_op, kill_connect_worker, restart_connect_worker, restart_connector"`
 	At   int    `json:"at" jsonschema:"simulation time in milliseconds at which the action fires; actions are replayed sorted by this value (>= 0). Space actions ~1000ms apart so the playground animates them one at a time"`
 
 	BrokerID string `json:"brokerId,omitempty" jsonschema:"broker id, e.g. broker-2 (kill_broker, restart_broker, add_broker, remove_broker, set_replica_speed, pause_broker, resume_broker). The default free-play cluster names brokers broker-1..broker-N"`
@@ -49,6 +50,12 @@ type ActionInput struct {
 	DeploymentID string `json:"deploymentId,omitempty" jsonschema:"sr_failover only (v2.2 preview): the SR deployment that takes over writes; the free-play deployment is sr. A follower-only deployment on a mirrored _schemas topic fails over; any other deployment is a no-op"`
 	NewSchema    bool   `json:"newSchema,omitempty" jsonschema:"restart_producer only (v2.2 preview): true deploys the next schema version of the producer's subject with the restart; false/omitted restarts it with an empty schema cache only"`
 	Eligible     *bool  `json:"eligible,omitempty" jsonschema:"set_sr_eligibility only (v2.2 preview): leader.eligibility of the instance, true = may lead, false = follower-only"`
+
+	// Streamhouse (v3.0, release stage next): cluster streamhouse only. The
+	// public playground does not ship the feature yet and skips these kinds.
+	WorkerID      string         `json:"workerId,omitempty" jsonschema:"kill_connect_worker, restart_connect_worker (v3.0, next; cluster streamhouse): the Kafka Connect worker, connect-1..connect-<workers> (2 by default, shape.connectSink.workers)"`
+	ConnectorName string         `json:"connectorName,omitempty" jsonschema:"restart_connector only (v3.0, next; cluster streamhouse): the sink connector to restart; the preset's Iceberg sink is orders-sink"`
+	IcebergOp     map[string]any `json:"icebergOp,omitempty" jsonschema:"iceberg_op only (v3.0, next; cluster streamhouse): one Iceberg table operation as the playground's op request object: op is create_table, append, delete, update, merge, equality_delete, rewrite_data_files, rewrite_position_delete_files, rewrite_manifests, create_tag, create_branch, replace_ref, drop_ref, fast_forward, rollback, set_current, cherrypick, expire_snapshots, remove_orphan_files, set_properties, upgrade_format, update_schema, update_spec, replace_sort_order, catalog_down or catalog_up, and the other keys are that operation's input, e.g. {op: set_properties, table: orders, updates: {write.target-file-size-bytes: '134217728'}, removals: []} or {op: rollback, table: orders, snapshotId: 1}. The preset's table is orders. The request is checked against the playground's own shape check (exact keys and JSON types per operation) and rejected if the playground would skip it"`
 }
 
 // GroupSettings is the JSON echo of actionlog.GroupSettings (the same fields,
@@ -276,10 +283,37 @@ func toEntry(i int, a ActionInput) (actionlog.Entry, error) {
 			return actionlog.Entry{}, err
 		}
 		action = actionlog.ResumeBroker{BrokerID: a.BrokerID}
+	// v3.0 Streamhouse (release stage next): Iceberg table operations and the
+	// Kafka Connect workers and sink connector of cluster streamhouse. The
+	// public playground skips them until it ships the streamhouse feature.
+	case "iceberg_op":
+		if a.IcebergOp == nil {
+			return fail("missing required field \"icebergOp\" (the op request object, e.g. {\"op\":\"catalog_down\"})")
+		}
+		raw, err := json.Marshal(a.IcebergOp)
+		if err != nil {
+			return fail("icebergOp: %v", err)
+		}
+		action = actionlog.IcebergOp{Request: string(raw)}
+	case "kill_connect_worker":
+		if err := need("workerId", a.WorkerID); err != nil {
+			return actionlog.Entry{}, err
+		}
+		action = actionlog.KillConnectWorker{WorkerID: a.WorkerID}
+	case "restart_connect_worker":
+		if err := need("workerId", a.WorkerID); err != nil {
+			return actionlog.Entry{}, err
+		}
+		action = actionlog.RestartConnectWorker{WorkerID: a.WorkerID}
+	case "restart_connector":
+		if err := need("connectorName", a.ConnectorName); err != nil {
+			return actionlog.Entry{}, err
+		}
+		action = actionlog.RestartConnector{Name: a.ConnectorName}
 	case "":
 		return fail("missing required field \"kind\"")
 	default:
-		return fail("unknown kind; expected one of produce, kill_broker, restart_broker, add_broker, remove_broker, add_producer, remove_producer, add_group, remove_group, add_consumer, add_share_group, config_change, reassign_partition, change_replication_factor, set_replica_speed, tier_offload, kill_sr, restart_sr, sr_failover, restart_producer, set_sr_eligibility, stop_coordinator_db, start_coordinator_db, stop_etcd, start_etcd, stop_object_storage, slow_object_storage, start_object_storage, pause_broker, resume_broker")
+		return fail("unknown kind; expected one of produce, kill_broker, restart_broker, add_broker, remove_broker, add_producer, remove_producer, add_group, remove_group, add_consumer, add_share_group, config_change, reassign_partition, change_replication_factor, set_replica_speed, tier_offload, kill_sr, restart_sr, sr_failover, restart_producer, set_sr_eligibility, stop_coordinator_db, start_coordinator_db, stop_etcd, start_etcd, stop_object_storage, slow_object_storage, start_object_storage, pause_broker, resume_broker, iceberg_op, kill_connect_worker, restart_connect_worker, restart_connector")
 	}
 
 	e := actionlog.Entry{At: a.At, Action: action}
@@ -435,6 +469,19 @@ func fromEntry(e actionlog.Entry) ActionInput {
 	case actionlog.ResumeBroker:
 		out.Kind = "resume_broker"
 		out.BrokerID = a.BrokerID
+	case actionlog.IcebergOp:
+		out.Kind = "iceberg_op"
+		// The request decoded out of a URL is valid JSON (the codec checked it).
+		_ = json.Unmarshal([]byte(a.Request), &out.IcebergOp)
+	case actionlog.KillConnectWorker:
+		out.Kind = "kill_connect_worker"
+		out.WorkerID = a.WorkerID
+	case actionlog.RestartConnectWorker:
+		out.Kind = "restart_connect_worker"
+		out.WorkerID = a.WorkerID
+	case actionlog.RestartConnector:
+		out.Kind = "restart_connector"
+		out.ConnectorName = a.Name
 	}
 	return out
 }
