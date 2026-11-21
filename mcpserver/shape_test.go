@@ -618,7 +618,7 @@ func TestShapeSchemaRegistryCombinesWithOtherSegments(t *testing.T) {
 
 // TestShapeImplMatchesTypeScriptFixtures replays the SIZE-IMPL lines of
 // mapping/testdata/ts-fixtures.txt (v2.2), dumped from the real TypeScript
-// codec for the inkless-3az, kafscale-3b, kafscale-2-3b and automq-3az presets: the shape the
+// codec for the inkless-3az, kafscale-3b and automq-3az presets: the shape the
 // playground decodes from a slug must come back out of shapeToParams as the
 // slug the playground itself re-encodes (or no size at all for the preset
 // default).
@@ -685,8 +685,8 @@ func TestShapeImplMatchesTypeScriptFixtures(t *testing.T) {
 		}
 		checked++
 	}
-	if checked != 23 {
-		t.Fatalf("replayed %d SIZE-IMPL fixtures, want 23", checked)
+	if checked != 16 {
+		t.Fatalf("replayed %d SIZE-IMPL fixtures, want 16", checked)
 	}
 }
 
@@ -710,10 +710,6 @@ func TestShapeImplPresets(t *testing.T) {
 		// Inkless: a timing alone is fine (clicks is diskless), on 9 brokers.
 		{"inkless-3az", &ClusterShape{Brokers: 9, DisklessTiming: &DisklessTimingShape{UploadMs: intp(300)}}, "9x3x3xxxxxxxxxxxxxxxxxx.300"},
 		{"kafscale-3b", &ClusterShape{DisklessTiming: &DisklessTimingShape{UploadMs: intp(900)}}, "3x3x1xxxxxxxxxxxxxxxxxx.900"},
-		// KafScale 2.0 (preview): the same sizes as kafscale-3b.
-		{"kafscale-2-3b", nil, ""},
-		{"kafscale-2-3b", &ClusterShape{Brokers: 5, Topics: []TopicShape{{Name: "orders", Partitions: 6, ReplicationFactor: 1}, {Name: "ev", Partitions: 3, ReplicationFactor: 1}}}, "5x6x1xev~3~1~1~d~~~~~1"},
-		{"kafscale-2-3b", &ClusterShape{DisklessTiming: &DisklessTimingShape{UploadMs: intp(900)}}, "3x3x1xxxxxxxxxxxxxxxxxx.900"},
 	} {
 		cluster, size, _, err := shapeToParams(c.cluster, c.shape)
 		if err != nil {
@@ -742,12 +738,8 @@ func TestShapeImplValidation(t *testing.T) {
 		{"inkless clicks taken", "inkless-3az", &ClusterShape{Topics: []TopicShape{{Name: "clicks", Partitions: 1, ReplicationFactor: 1}}}, []string{"\"clicks\"", "already has a topic"}},
 		{"diskless-3az clicks taken", "diskless-3az", &ClusterShape{Topics: []TopicShape{{Name: "clicks", Partitions: 1, ReplicationFactor: 1}}}, []string{"\"clicks\"", "already has a topic"}},
 		{"too many brokers", "automq-3az", &ClusterShape{Brokers: 10}, []string{"10 total brokers", "cap of 9"}},
-		{"kafscale 2.0 rf 3", "kafscale-2-3b", &ClusterShape{Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 3}}}, []string{"replicationFactor 3", "kafscale-2-3b", "replication factor 1"}},
-		{"kafscale 2.0 commit interval", "kafscale-2-3b", &ClusterShape{DisklessTiming: &DisklessTimingShape{CommitIntervalMs: intp(250)}}, []string{"commitIntervalMs", "kafscale-2-3b", "no commit interval"}},
-		{"kafscale 2.0 compacted", "kafscale-2-3b", &ClusterShape{Topics: []TopicShape{{Name: "ev", Partitions: 1, ReplicationFactor: 1, CleanupPolicy: "compact"}}}, []string{"\"ev\"", "compacted", "kafscale-2-3b"}},
-		{"kafscale 2.0 too many brokers", "kafscale-2-3b", &ClusterShape{Brokers: 10}, []string{"10 total brokers", "cap of 9"}},
 		{"too many partitions", "kafscale-3b", &ClusterShape{Topics: []TopicShape{{Name: "orders", Partitions: 7, ReplicationFactor: 1}}}, []string{"partitions 7", "cap of 6"}},
-		{"unknown cluster", "warpstream", nil, []string{"\"warpstream\"", "inkless-3az, kafscale-3b, kafscale-2-3b, automq-3az"}},
+		{"unknown cluster", "warpstream", nil, []string{"\"warpstream\"", "inkless-3az, kafscale-3b, automq-3az"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			_, _, _, err := shapeToParams(c.cluster, c.shape)

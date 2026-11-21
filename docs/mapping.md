@@ -402,8 +402,7 @@ shared multi-DC caps (at most 9 brokers and 6 partitions per topic):
 | `cluster` | Default `size` | What the shape accepts |
 |---|---|---|
 | `inkless-3az` | `6x3x3` | diskless-3az on Aiven Inkless: `orders` stays classic (no `disklessEnable` on it), the preset's `clicks` is diskless at RF 1, PostgreSQL in `az-a` is the batch coordinator. Both `disklessTiming` fields apply. |
-| `kafscale-3b` | `3x3x1` | KafScale 1.6.3: every topic is diskless at RF 1 (S3 behind etcd leases): an RF above 1 or a compacted topic is refused, an extra topic gets the diskless `~1` without asking. `disklessTiming.uploadMs` only; `commitIntervalMs` is refused because KafScale has no commit interval. |
-| `kafscale-2-3b` | `3x3x1` | the same cluster on KafScale 2.0 (preview of the next KafScale release): lease fencing, and a proxy that answers `REQUEST_TIMED_OUT` once etcd has been down longer than its 60 s cache TTL. The shape takes exactly what `kafscale-3b` takes, and the slugs are the same. |
+| `kafscale-3b` | `3x3x1` | KafScale 2.0: every topic is diskless at RF 1 (S3 behind etcd leases): an RF above 1 or a compacted topic is refused, an extra topic gets the diskless `~1` without asking. `disklessTiming.uploadMs` only; `commitIntervalMs` is refused because KafScale has no commit interval. |
 | `automq-3az` | `3x6x1` | every topic is S3-backed at RF 1 behind a per-broker WAL, with the same RF, compaction and `~1` rules as `kafscale-3b`. Both `disklessTiming` fields apply; `commitIntervalMs` is the WAL batch interval. |
 
 The playground drops the primary diskless flag (`d`, tail index 17) on all
@@ -423,17 +422,17 @@ cluster:
 | Action kind | Code | Notes |
 |---|---|---|
 | `stop_coordinator_db` / `start_coordinator_db` | `DB:0` / `DB:1` | the Inkless PostgreSQL batch coordinator (`inkless-3az`) |
-| `stop_etcd` / `start_etcd` | `ET:0` / `ET:1` | KafScale's etcd, which holds the metadata and partition leases (`kafscale-3b`, `kafscale-2-3b`) |
+| `stop_etcd` / `start_etcd` | `ET:0` / `ET:1` | KafScale's etcd, which holds the metadata and partition leases (`kafscale-3b`) |
 
 Two more pause and resume one KafScale broker. They take `brokerId` (the
 `<broker>` in the code) and are a no-op on any cluster other than
-`kafscale-3b` and `kafscale-2-3b`, on a dead or paused broker (pause) and on a
+`kafscale-3b`, on a dead or paused broker (pause) and on a
 running one (resume):
 
 | Action kind | Code | Notes |
 |---|---|---|
 | `pause_broker` | `BP:<broker>` | freezes the broker (SIGSTOP, a long GC pause): its requests time out and its partition leases expire after the 10 s TTL |
-| `resume_broker` | `BU:<broker>` | wakes it (SIGCONT). KafScale 1.6.3 keeps its partition logs if its etcd session expired (KafScale issue #324, scenario 08.1.5); 2.0 drops them (scenario 08.2.7) |
+| `resume_broker` | `BU:<broker>` | wakes it (SIGCONT). If its etcd session expired meanwhile, it drops its partition logs and restores a partition before it writes it again (scenario 08.2.7) |
 
 An empty broker id is an error here; the playground drops the entry.
 
