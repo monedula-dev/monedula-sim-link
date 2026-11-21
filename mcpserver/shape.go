@@ -30,7 +30,7 @@ type ClusterShape struct {
 	// freePlayTopologies.ts. Requires at least one topic with DisklessEnable
 	// (validateDisklessTiming); rejected otherwise, mirroring the TS store's
 	// "kept only when some topic is diskless" rule.
-	DisklessTiming *DisklessTimingShape `json:"disklessTiming,omitempty" jsonschema:"optional diskless timing override (v2.0+); requires a diskless topic (disklessEnable, or a diskless preset: diskless-3az, inkless-3az, kafscale-3b, kafscale-2-3b or automq-3az). kafscale-3b and kafscale-2-3b take uploadMs only (KafScale has no commit interval); on automq-3az commitIntervalMs is the WAL batch interval"`
+	DisklessTiming *DisklessTimingShape `json:"disklessTiming,omitempty" jsonschema:"optional diskless timing override (v2.0+); requires a diskless topic (disklessEnable, or a diskless preset: diskless-3az, inkless-3az, kafscale-3b or automq-3az). kafscale-3b takes uploadMs only (KafScale has no commit interval); on automq-3az commitIntervalMs is the WAL batch interval"`
 	// SchemaRegistry turns the session's schema registry on (size tail index
 	// 14). Mirrors FreePlaySize.schemaRegistry / srInstancesPerDc /
 	// srFollowerOnlyDcs in freePlayTopologies.ts.
@@ -84,7 +84,7 @@ type TopicShape struct {
 	// with a compacted cleanupPolicy or on a mirror topology
 	// (active-passive/active-active), mirroring disklessAllowed in
 	// freePlayTopologies.ts.
-	DisklessEnable bool `json:"disklessEnable,omitempty" jsonschema:"optional KIP-1163 draft diskless.enable (v2.0+); not compatible with a compacted cleanupPolicy or a mirror topology. On kafscale-3b, kafscale-2-3b and automq-3az every topic is diskless already; on inkless-3az the primary 'orders' stays classic"`
+	DisklessEnable bool `json:"disklessEnable,omitempty" jsonschema:"optional KIP-1163 draft diskless.enable (v2.0+); not compatible with a compacted cleanupPolicy or a mirror topology. On kafscale-3b and automq-3az every topic is diskless already; on inkless-3az the primary 'orders' stays classic"`
 }
 
 // topology mirrors the §10 table.
@@ -122,7 +122,7 @@ type topology struct {
 }
 
 // topologyOrder lists the topologies in the playground's own order, for errors.
-var topologyOrder = []string{"single-dc", "active-passive", "active-active", "stretched-2-5", "stretched-3", "diskless-3az", "inkless-3az", "kafscale-3b", "kafscale-2-3b", "automq-3az", "streamhouse"}
+var topologyOrder = []string{"single-dc", "active-passive", "active-active", "stretched-2-5", "stretched-3", "diskless-3az", "inkless-3az", "kafscale-3b", "automq-3az", "streamhouse"}
 
 // allDiskless mirrors primaryDisklessByConstruction in freePlayTopologies.ts:
 // KafScale and AutoMQ have no classic topics, so every topic is diskless and
@@ -161,15 +161,10 @@ var topologies = map[string]topology{
 	// primary diskless toggle is not offered), `clicks` is diskless at RF 1, and
 	// PostgreSQL in az-a is the batch coordinator (actions DB:0/DB:1).
 	"inkless-3az": {slug: "inkless-3az", zones: []string{"single"}, defaultBrokers: []int{6}, defaultPartitions: 3, defaultRF: 3, brokerCap: 9, partitionCap: 6, templateDiskless: true, fixedTopics: []string{"clicks"}, impl: "inkless"},
-	// kafscale-3b: three brokers on KafScale, every topic diskless at RF 1 in S3
-	// behind etcd partition leases (actions ET:0/ET:1); no commit interval.
+	// kafscale-3b: three brokers on KafScale 2.0, every topic diskless at RF 1
+	// in S3 behind etcd partition leases (actions ET:0/ET:1), clients through a
+	// proxy with a 60 s etcd cache TTL; no commit interval.
 	"kafscale-3b": {slug: "kafscale-3b", zones: []string{"single"}, defaultBrokers: []int{3}, defaultPartitions: 3, defaultRF: 1, brokerCap: 9, partitionCap: 6, impl: "kafscale"},
-	// kafscale-2-3b: the same cluster on KafScale 2.0 (preview of the next
-	// release: lease fencing, and a proxy that answers REQUEST_TIMED_OUT once
-	// etcd has been down longer than its 60 s cache TTL). The playground sizes
-	// it exactly like kafscale-3b (its size rules key on the implementation, not
-	// the version); only the engine's KafScale version differs.
-	"kafscale-2-3b": {slug: "kafscale-2-3b", zones: []string{"single"}, defaultBrokers: []int{3}, defaultPartitions: 3, defaultRF: 1, brokerCap: 9, partitionCap: 6, impl: "kafscale"},
 	// automq-3az: three brokers on AutoMQ cycling racks az-a/b/c, every topic
 	// S3-backed at RF 1 behind a per-broker WAL; six partitions by default.
 	"automq-3az": {slug: "automq-3az", zones: []string{"single"}, defaultBrokers: []int{3}, defaultPartitions: 6, defaultRF: 1, brokerCap: 9, partitionCap: 6, impl: "automq"},
@@ -266,12 +261,23 @@ var cleanupCodes = map[string]string{"delete": "d", "compact": "c", "compact,del
 // "x", so a name's "x" is emitted as "*" and restored on decode.
 func escapeSizeName(name string) string { return strings.ReplaceAll(name, "x", "*") }
 
+// clusterAliases maps retired free-play topology ids to the type the
+// playground opens for them now. kafscale-2-3b was the KafScale 2.0 preview
+// next to a KafScale 1.6.3 kafscale-3b; KafScale 2.0 is released, the
+// simulator dropped 1.6.3, and kafscale-3b runs 2.0 (the playground itself
+// opens a kafscale-2-3b link as kafscale-3b).
+var clusterAliases = map[string]string{"kafscale-2-3b": "kafscale-3b"}
+
 // shapeToParams turns (cluster, shape) into the cluster/size query params.
 // Both returns are "" when the shape equals the topology default (the store
 // omits default params, §10/§14.1). notes carry non-fatal explanations.
 func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam string, notes []string, err error) {
 	if cluster == "" {
 		cluster = "single-dc"
+	}
+	if to, ok := clusterAliases[cluster]; ok {
+		notes = append(notes, fmt.Sprintf("cluster %q is an older name of %q (KafScale 2.0); the URL uses %q", cluster, to, to))
+		cluster = to
 	}
 	topo, ok := topologies[cluster]
 	if !ok {
@@ -281,7 +287,7 @@ func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam
 		clusterParam = cluster
 	}
 	if shape == nil {
-		return clusterParam, "", nil, nil
+		return clusterParam, "", notes, nil
 	}
 	if topo.mrc {
 		return "", "", nil, fmt.Errorf("shape: cluster %q uses the MRC sync/observer size form, which this tool does not generate yet; omit shape to open its default (2 sync + 1 observer per DC), or use stretched-3 for a shaped multi-DC cluster", cluster)
@@ -592,7 +598,7 @@ func validateDisklessTiming(topo topology, dt *DisklessTimingShape, anyDiskless 
 		return nil
 	}
 	if !anyDiskless {
-		return fmt.Errorf("requires a diskless topic (disklessEnable, or a diskless preset: diskless-3az, inkless-3az, kafscale-3b, kafscale-2-3b or automq-3az) (KIP-1163 draft, v2.0+)")
+		return fmt.Errorf("requires a diskless topic (disklessEnable, or a diskless preset: diskless-3az, inkless-3az, kafscale-3b or automq-3az) (KIP-1163 draft, v2.0+)")
 	}
 	if dt.CommitIntervalMs != nil && !hasCommitInterval(topo) {
 		return fmt.Errorf("commitIntervalMs: %s has no commit interval (KafScale flushes the segment per produce request); set uploadMs only", topo.slug)

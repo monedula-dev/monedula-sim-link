@@ -398,9 +398,10 @@ func TestOpenScenario(t *testing.T) {
 		t.Errorf("URL: got %q want %q", out.URL, want)
 	}
 
-	// The KafScale scenarios of simulator v2.2: a paused 1.6.3 broker (08.1.5)
-	// and the KafScale 2.0 (preview) module 08.2.1-08.2.7.
-	for _, id := range []string{"08.1.5", "08.2.1", "08.2.2", "08.2.3", "08.2.4", "08.2.5", "08.2.6", "08.2.7"} {
+	// The KafScale 2.0 scenarios of simulator v2.2: the write path 08.1.1 and
+	// 08.2.1-08.2.7 (the playground opens a retired 08.1.2-08.1.5 link as its
+	// 2.0 counterpart).
+	for _, id := range []string{"08.1.1", "08.2.1", "08.2.2", "08.2.3", "08.2.4", "08.2.5", "08.2.6", "08.2.7"} {
 		res := callTool(t, s, "open_scenario", map[string]any{"scenarioId": id})
 		var out OpenScenarioOutput
 		structured(t, res, &out)
@@ -606,8 +607,7 @@ func TestValidateActionsSchemaRegistry(t *testing.T) {
 }
 
 // TestBuildURLDisklessControlPlanes builds the v2.2 control-plane sessions end
-// to end: PostgreSQL stopped and started on inkless-3az, etcd on kafscale-3b
-// and kafscale-2-3b,
+// to end: PostgreSQL stopped and started on inkless-3az, etcd on kafscale-3b,
 // with the playground's own DB/ET codes in the URL and the kinds echoed back.
 func TestBuildURLDisklessControlPlanes(t *testing.T) {
 	s := newSession(t)
@@ -619,7 +619,6 @@ func TestBuildURLDisklessControlPlanes(t *testing.T) {
 	}{
 		{"inkless-3az", "stop_coordinator_db", "start_coordinator_db", "DB:0@2400,DB:1@6000"},
 		{"kafscale-3b", "stop_etcd", "start_etcd", "ET:0@2400,ET:1@6000"},
-		{"kafscale-2-3b", "stop_etcd", "start_etcd", "ET:0@2400,ET:1@6000"},
 	} {
 		res := callTool(t, s, "build_playground_url", map[string]any{
 			"cluster": c.cluster,
@@ -655,7 +654,7 @@ func TestBuildURLDisklessControlPlanes(t *testing.T) {
 // the URL and the kinds echoed back.
 func TestBuildURLObjectStorage(t *testing.T) {
 	s := newSession(t)
-	for _, cluster := range []string{"diskless-3az", "inkless-3az", "kafscale-3b", "kafscale-2-3b", "automq-3az"} {
+	for _, cluster := range []string{"diskless-3az", "inkless-3az", "kafscale-3b", "automq-3az"} {
 		res := callTool(t, s, "build_playground_url", map[string]any{
 			"cluster": cluster,
 			"actions": []map[string]any{
@@ -696,7 +695,7 @@ func TestBuildURLObjectStorage(t *testing.T) {
 // BP/BU codes in the URL and the kinds echoed back with their broker id.
 func TestBuildURLPauseBroker(t *testing.T) {
 	s := newSession(t)
-	for _, cluster := range []string{"kafscale-3b", "kafscale-2-3b"} {
+	for _, cluster := range []string{"kafscale-3b"} {
 		res := callTool(t, s, "build_playground_url", map[string]any{
 			"cluster": cluster,
 			"actions": []map[string]any{
@@ -722,7 +721,7 @@ func TestBuildURLPauseBroker(t *testing.T) {
 	// The broker id is required.
 	for _, kind := range []string{"pause_broker", "resume_broker"} {
 		wantToolError(t, callTool(t, s, "build_playground_url", map[string]any{
-			"cluster": "kafscale-2-3b",
+			"cluster": "kafscale-3b",
 			"actions": []map[string]any{{"kind": kind, "at": 1000}},
 		}), "brokerId")
 	}
@@ -735,5 +734,33 @@ func TestBuildURLPauseBroker(t *testing.T) {
 	}
 	if out.Entries[0].Kind != "pause_broker" || out.Entries[1].Kind != "resume_broker" || out.Entries[1].BrokerID != "broker-1" {
 		t.Errorf("previewed %+v", out.Entries)
+	}
+}
+
+// TestBuildURLKafscaleOlderName: kafscale-2-3b, the KafScale 2.0 preview
+// preset before KafScale 2.0 was released, is accepted as an older name of
+// kafscale-3b. The URL uses kafscale-3b, with or without a shape, and a note
+// says so; the actions are unchanged.
+func TestBuildURLKafscaleOlderName(t *testing.T) {
+	s := newSession(t)
+	for _, shape := range []map[string]any{nil, {"brokers": 5}} {
+		args := map[string]any{
+			"cluster": "kafscale-2-3b",
+			"actions": []map[string]any{{"kind": "stop_etcd", "at": 2400}, {"kind": "start_etcd", "at": 6000}},
+		}
+		if shape != nil {
+			args["shape"] = shape
+		}
+		var out BuildPlaygroundURLOutput
+		structured(t, callTool(t, s, "build_playground_url", args), &out)
+		if out.Cluster != "kafscale-3b" || !strings.Contains(out.URL, "cluster=kafscale-3b") || strings.Contains(out.URL, "kafscale-2-3b") {
+			t.Errorf("shape %v: cluster %q URL %q, want kafscale-3b", shape, out.Cluster, out.URL)
+		}
+		if got := actionsParamOf(t, out.URL); got != "ET:0@2400,ET:1@6000" {
+			t.Errorf("shape %v: URL actions param %q", shape, got)
+		}
+		if !strings.Contains(strings.Join(out.Notes, " "), `"kafscale-2-3b" is an older name of "kafscale-3b"`) {
+			t.Errorf("shape %v: notes %q, want the older-name note", shape, out.Notes)
+		}
 	}
 }

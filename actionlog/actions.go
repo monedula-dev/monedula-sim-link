@@ -734,7 +734,7 @@ func (a SetSREligibility) payload() (string, error) {
 // The playground writes these as "DB:0"/"DB:1" and "ET:0"/"ET:1": the payload
 // is the target state, 0 = stopped, 1 = running. They act on the control plane
 // of a diskless implementation preset (cluster inkless-3az, kafscale-3b or
-// kafscale-2-3b) and are a no-op on any other cluster.
+// kafscale-3b) and are a no-op on any other cluster.
 
 // StopCoordinatorDB stops the Inkless batch coordinator's PostgreSQL (DB:0).
 type StopCoordinatorDB struct{}
@@ -800,9 +800,9 @@ func (StartObjectStorage) payload() (string, error) { return "1", nil }
 // The playground writes these as "BP:<broker>" (pause) and "BU:<broker>"
 // (resume). Pausing freezes the broker process (SIGSTOP, a long GC pause): its
 // requests time out and its etcd partition leases expire after the TTL.
-// Resuming wakes it (SIGCONT); KafScale 1.6.3 keeps its partition logs if its
-// etcd session expired meanwhile (KafScale issue #324), 2.0 drops them. Both
-// act on KafScale only (kafscale-3b, kafscale-2-3b) and are a no-op on any
+// Resuming wakes it (SIGCONT); if its etcd session expired meanwhile it drops
+// its partition logs (KafScale 2.0, the fix of issue #324). Both
+// act on KafScale only (kafscale-3b) and are a no-op on any
 // other cluster, on a dead or paused broker (pause) and on a running one
 // (resume).
 

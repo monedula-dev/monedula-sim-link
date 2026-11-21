@@ -253,7 +253,7 @@ func toEntry(i int, a ActionInput) (actionlog.Entry, error) {
 		}
 		action = actionlog.SetSREligibility{InstanceID: a.InstanceID, Eligible: *a.Eligible}
 	// v2.2 diskless control planes. No fields: they act on the cluster's one
-	// PostgreSQL (inkless-3az) or etcd (kafscale-3b, kafscale-2-3b) and are a
+	// PostgreSQL (inkless-3az) or etcd (kafscale-3b) and are a
 	// no-op elsewhere.
 	case "stop_coordinator_db":
 		action = actionlog.StopCoordinatorDB{}
@@ -272,7 +272,7 @@ func toEntry(i int, a ActionInput) (actionlog.Entry, error) {
 	case "start_object_storage":
 		action = actionlog.StartObjectStorage{}
 	// v2.2 KafScale broker pause / resume (SIGSTOP / SIGCONT): a no-op on any
-	// cluster other than kafscale-3b and kafscale-2-3b.
+	// cluster other than kafscale-3b.
 	case "pause_broker":
 		if err := need("brokerId", a.BrokerID); err != nil {
 			return actionlog.Entry{}, err

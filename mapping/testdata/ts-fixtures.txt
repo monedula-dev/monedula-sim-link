@@ -221,16 +221,6 @@ SIZE-IMPL automq-3az 4x6x1xxxxxxxxxxxxxxxxxx250.900 => 4x6x1xxxxxxxxxxxxxxxxxx25
 SIZE-IMPL automq-3az 3x6x1xev~2~1~1~d~~~~ => 3x6x1xev~2~1~1~d~~~~~1 :: {"brokersPerZone":[3],"partitions":6,"replicationFactor":1,"extraTopics":[{"name":"ev","partitions":2,"replicationFactor":1,"minInSyncReplicas":1,"cleanupPolicy":"delete","disklessEnable":true}]}
 SIZE-IMPL automq-3az 3x6x1xxxxxxxxxxxxxxx2 => 3x6x1xxxxxxxxxxxxxxx2 :: {"brokersPerZone":[3],"partitions":6,"replicationFactor":1,"schemaRegistry":true,"srInstancesPerDc":1}
 SIZE-IMPL automq-3az 3x6x1xxxxxxxxxxxxxxxxxxd => 3x6x1 :: {"brokersPerZone":[3],"partitions":6,"replicationFactor":1}
-# 2026-11-16 (KafScale 2.0 preview, kafscale-2-3b): the same SIZE-IMPL dump for the
-#   kafscale-2-3b preset, from website main at d524fa16 (PR #949). Its lines match
-#   kafscale-3b's: the playground sizes both by the implementation, not the version.
-SIZE-IMPL kafscale-2-3b 3x3x1 => 3x3x1 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1}
-SIZE-IMPL kafscale-2-3b 3x3x1xxxxxxxxxxxxxxxxxx250.900 => 3x3x1xxxxxxxxxxxxxxxxxx.900 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"disklessTiming":{"uploadMs":900}}
-SIZE-IMPL kafscale-2-3b 3x3x1xxxxxxxxxxxxxxxxxx.900 => 3x3x1xxxxxxxxxxxxxxxxxx.900 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"disklessTiming":{"uploadMs":900}}
-SIZE-IMPL kafscale-2-3b 5x6x1xev~3~1~1~d~~~~ => 5x6x1xev~3~1~1~d~~~~~1 :: {"brokersPerZone":[5],"partitions":6,"replicationFactor":1,"extraTopics":[{"name":"ev","partitions":3,"replicationFactor":1,"minInSyncReplicas":1,"cleanupPolicy":"delete","disklessEnable":true}]}
-SIZE-IMPL kafscale-2-3b 5x6x1xev~3~1~1~d~~~~~1 => 5x6x1xev~3~1~1~d~~~~~1 :: {"brokersPerZone":[5],"partitions":6,"replicationFactor":1,"extraTopics":[{"name":"ev","partitions":3,"replicationFactor":1,"minInSyncReplicas":1,"cleanupPolicy":"delete","disklessEnable":true}]}
-SIZE-IMPL kafscale-2-3b 3x3x3 => 3x3x1 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1}
-SIZE-IMPL kafscale-2-3b 3x3x1xxxxxxxxxxxxxxxxxxd => 3x3x1 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1}
 # 2026-11-19 (v3.0 Streamhouse, release stage next): SIZE-SINK <raw> => <slug> :: <json size>
 #   = decodeFreePlaySize('streamhouse', <raw>), then "(default)" when isDefaultFreePlaySize
 #   holds (the playground omits size) or else encodeFreePlaySize, via a throwaway tsx script
