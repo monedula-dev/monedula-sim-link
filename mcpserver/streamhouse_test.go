@@ -150,12 +150,12 @@ func TestShapeStreamhouseValidation(t *testing.T) {
 		{"timeout high", "streamhouse", &ClusterShape{ConnectSink: &ConnectSinkShape{CommitTimeoutMs: intp(60500)}}, []string{"commitTimeoutMs 60500"}},
 		{"sink elsewhere", "single-dc", &ClusterShape{ConnectSink: &ConnectSinkShape{Workers: intp(3)}}, []string{"single-dc", "streamhouse only"}},
 		{"control topic", "streamhouse", &ClusterShape{Topics: []TopicShape{{Name: "control-iceberg", Partitions: 1, ReplicationFactor: 1}}}, []string{"\"control-iceberg\"", "internal topic"}},
-		{"diskless extra", "streamhouse", &ClusterShape{Topics: []TopicShape{{Name: "ev", Partitions: 1, ReplicationFactor: 1, DisklessEnable: true}}}, []string{"disklessEnable", "classic topics only"}},
-		{"diskless primary", "streamhouse", &ClusterShape{Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 3, DisklessEnable: true}}}, []string{"primary 'orders'", "classic topics only"}},
+		{"diskless extra", "streamhouse", &ClusterShape{Topics: []TopicShape{{Name: "ev", Partitions: 1, ReplicationFactor: 1, DisklessEnable: boolp(true)}}}, []string{"disklessEnable", "classic topics only"}},
+		{"diskless primary", "streamhouse", &ClusterShape{Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 3, DisklessEnable: boolp(true)}}}, []string{"primary 'orders'", "classic topics only"}},
 		{"diskless timing", "streamhouse", &ClusterShape{DisklessTiming: &DisklessTimingShape{UploadMs: intp(300)}}, []string{"shape.disklessTiming", "requires a diskless topic"}},
 		{"too many brokers", "streamhouse", &ClusterShape{Brokers: 10}, []string{"10 total brokers", "cap of 9"}},
 		{"too many partitions", "streamhouse", &ClusterShape{Topics: []TopicShape{{Name: "orders", Partitions: 7, ReplicationFactor: 3}}}, []string{"partitions 7", "cap of 6"}},
-		{"unknown cluster lists it", "streamhous", nil, []string{"automq-3az, streamhouse"}},
+		{"unknown cluster lists it", "streamhous", nil, []string{"automq-3az, ursa-3az, streamhouse"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			_, _, _, err := shapeToParams(c.cluster, c.shape)
