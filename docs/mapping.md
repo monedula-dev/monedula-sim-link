@@ -423,6 +423,7 @@ cluster:
 |---|---|---|
 | `stop_coordinator_db` / `start_coordinator_db` | `DB:0` / `DB:1` | the Inkless PostgreSQL batch coordinator (`inkless-3az`) |
 | `stop_etcd` / `start_etcd` | `ET:0` / `ET:1` | KafScale's etcd, which holds the metadata and partition leases (`kafscale-3b`) |
+| `stop_control_plane` / `start_control_plane` | `CP:0` / `CP:1` | v2.3, `next`: WarpStream's hosted control plane (`warpstream-3az`; see below) |
 
 Two more pause and resume one KafScale broker (and, from v2.3, an Ursa broker:
 see *Ursa for Kafka* below). They take `brokerId` (the `<broker>` in the code)
@@ -450,6 +451,91 @@ Any other `OS` payload is an error here; the playground drops it.
 
 A deployment of the playground older than v2.2 falls back to single-dc for
 these `cluster` values and drops the codes.
+
+## WarpStream and Redpanda Cloud Topics: `warpstream-3az`, `redpanda-3az` (v2.3, `next`)
+
+The simulator's v2.3 adds WarpStream and Redpanda Cloud Topics, at release stage
+`next`: the public playground does not offer the `freeplay.warpstream` and
+`freeplay.redpanda` features yet and opens these `cluster` values as single-dc.
+`connect` never emits them. The MCP `build_playground_url` tool takes them:
+
+| `cluster` | Default `size` | What it opens |
+|---|---|---|
+| `warpstream-3az` | `3x3x1` | 3 WarpStream Agents, one per zone `az-a`, `az-b`, `az-c`, and no KRaft controllers: the control plane is hosted outside the account and assigns the offsets at commit. Every topic is in object storage at replication factor 1 (any Agent serves any partition); `orders` has 3 partitions. Producers `p-a` (orders, zone `az-a`, idempotent) and `p-c` (orders, zone `az-c`, not idempotent), both `acks=all`; group `g-orders` with member `c1` (zone `az-b`, `read_committed`) reads orders. Diskless timing 500 ms `batchTimeout`, 600 ms upload, 200 ms control plane commit. |
+| `redpanda-3az` | `3x6x3` | 3 Redpanda v26.2.2 brokers cycling racks `az-a`, `az-b`, `az-c` (rack-aware) and no KRaft controllers (Redpanda's controller Raft group is not drawn). Every topic is a cloud topic by the cluster (`redpanda.storage.mode=cloud`) at its own replication factor: `orders` has 6 partitions at RF 3, leaders two per broker, so each L0 object mixes partitions, and a placeholder in each partition's Raft log gives a record its offset. Producers `p-all` (`acks=all`, idempotent) and `p-one` (`acks=1`, not idempotent), both in `az-a`; group `g-orders` with member `c1` (`az-b`) reads orders. Diskless timing 500 ms L0 upload interval, 600 ms upload, 40 ms L1 registration; the reconciler runs every 2 s. |
+
+On `warpstream-3az` the shape refuses what the playground would rewrite:
+
+- fewer than 3 or more than 6 Agents: one or two in each zone. Past one Agent
+  per zone the playground stores the per-Agent zone list in tail index 4, so the
+  tool writes the cycle there (`4x3x1xxxxxaz-a!az-b!az-c!az-a` on 4 Agents); the
+  shape has no input for another assignment;
+- a replication factor above 1 ("WarpStream partitions have no replicas; object
+  storage replicates the data and any Agent serves any partition.");
+- a compacted cleanup policy (WarpStream supports compacted topics, but the
+  simulator does not model file compaction yet and creates the topic with
+  `cleanup.policy=delete`);
+- more than 6 partitions per topic.
+
+As on KafScale and AutoMQ, an extra topic gets the diskless `~1` without asking
+and the primary diskless flag is never written. Both `disklessTiming` fields
+apply: `commitIntervalMs` is the Agent's `batchTimeout`.
+
+On `redpanda-3az` the shape refuses:
+
+- `disklessEnable: true` on any topic: every topic is a cloud topic by the
+  cluster, and the playground drops the flag. A `disklessTiming` applies with no
+  diskless topic; `commitIntervalMs` is the L0 upload interval
+  (`cloud_topics_produce_upload_interval`);
+- a compacted cleanup policy (Redpanda compacts cloud topics in L1, but the
+  simulator does not model it yet and creates the topic with
+  `cleanup.policy=delete`);
+- more than 9 brokers, 6 partitions per topic, or a replication factor above
+  the broker count.
+
+With fewer than 3 brokers and no `orders` in the shape, `orders` follows the
+broker count down, and a note says so.
+
+The shape describes no clients, so it cannot set WarpStream Ripcord (the
+Agent's `-enableRipcord`, a `c` in the size's diskless segment), a WarpStream
+lightning topic (`warpstream.topic.type=lightning`, an extra topic's 11th field
+`l`) or Redpanda's `enable_rack_awareness` (an `a` in the diskless segment); the
+playground leaves all three off by default. `rackAware: true` is kept in the
+slug on both, though `redpanda-3az` is rack-aware already.
+
+Two action kinds stop and start the WarpStream control plane. They take no
+fields and are a no-op on any other cluster:
+
+| Action kind | Code | Notes |
+|---|---|---|
+| `stop_control_plane` | `CP:0` | the control plane is unreachable: commits in flight fail, produce and fetch get `REQUEST_TIMED_OUT`, group calls `COORDINATOR_NOT_AVAILABLE`, and an Agent cannot start |
+| `start_control_plane` | `CP:1` | it is reachable again; with Ripcord on, journaled objects are replayed |
+
+Any other `CP` payload is an error here; the playground drops it. The
+playground's engine refuses some actions on these clusters (it logs
+`admin_rejected` and changes nothing), and `build_playground_url` refuses them
+up front with the engine's copy:
+
+| Cluster | Action | Refused when | Engine copy |
+|---|---|---|---|
+| `warpstream-3az` | `stop_object_storage`, `slow_object_storage` | always (`start_object_storage` does nothing there) | WarpStream's docs do not describe what Agents do when object storage is unavailable or slow, so the simulator does not model it. |
+| `warpstream-3az` | `restart_broker`, `add_broker` | a `stop_control_plane` comes before it in replay order (by `at`, ties in list order) with no `start_control_plane` in between | A WarpStream Agent cannot start while the control plane is unreachable. |
+| `warpstream-3az` | `reassign_partition` to more than one Agent, `change_replication_factor` | always | WarpStream partitions have no replicas; object storage replicates the data and any Agent serves any partition. |
+| `warpstream-3az` | `add_share_group` | always: every topic is diskless | WarpStream does not support share groups (its protocol support page lists no share-group APIs). |
+| `redpanda-3az` | `remove_broker` | a starting broker, while a topic's replication factor equals the broker count (every broker then holds a replica of each of its partitions; the preset's `orders` at RF 3 on 3 brokers), unless a `reassign_partition` or `change_replication_factor` comes first. Otherwise replica placement decides, which this tool does not compute, so the response carries a note instead. | a broker that holds replicas of Redpanda partitions leaves them by a Raft membership change, which the simulator does not model; move its replicas off first, or kill it |
+
+Object storage outages are modelled on Redpanda: `stop_object_storage`,
+`slow_object_storage` and `start_object_storage` apply there. The slugs are
+pinned by the `SIZE-IMPL warpstream-3az` and `SIZE-IMPL redpanda-3az` lines in
+`mapping/testdata/ts-fixtures.txt`, dumped from the simulator's codec.
+
+`open_scenario` takes both tracks, also at release stage `next`. WarpStream,
+10.1.1-10.1.7: 10.1.1 the write path, 10.1.2 zones and a leader per client,
+10.1.3 an Agent dies, 10.1.4 the control plane is unreachable, 10.1.5 Ripcord,
+10.1.6 lightning topics, 10.1.7 transactions in the control plane. Redpanda
+Cloud Topics, 11.1.1-11.1.5: 11.1.1 the write path, 11.1.2 the leader crashes,
+an election, nothing to replay, 11.1.3 object storage goes down, 11.1.4 from L0
+to L1 and who serves a read, 11.1.5 exactly-once on Cloud Topics.
 
 ## Ursa for Kafka: `ursa-3az` (v2.3, `next`)
 

@@ -3,7 +3,8 @@
 // subset a cluster visualizer needs (broker lifecycle, producers, produces,
 // consumer / share groups, config changes, reassignment, replication factor,
 // replica speed, tiered offload, the v2.2-preview Schema Registry failure
-// kinds, the v2.2 diskless control planes, PostgreSQL and etcd, the v2.2
+// kinds, the diskless control planes (v2.2 PostgreSQL and etcd, v2.3
+// WarpStream's hosted control plane at release stage next), the v2.2
 // object storage outage kinds, the v2.2 KafScale broker pause / resume, and
 // the v3.0 Streamhouse kinds at release stage next: Iceberg table operations,
 // Kafka Connect worker kill / restart and connector restart) and is a faithful

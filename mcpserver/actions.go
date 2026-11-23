@@ -12,7 +12,7 @@ import (
 // shape is echoed back by the tools after the URL self-decode, so a caller can
 // diff intent against what the playground will load.
 type ActionInput struct {
-	Kind string `json:"kind" jsonschema:"one of: produce, kill_broker, restart_broker, add_broker, remove_broker, add_producer, remove_producer, add_group, remove_group, add_consumer, add_share_group, config_change, reassign_partition, change_replication_factor, set_replica_speed, tier_offload, kill_sr, restart_sr, sr_failover, restart_producer, set_sr_eligibility, stop_coordinator_db, start_coordinator_db, stop_etcd, start_etcd, stop_object_storage, slow_object_storage, start_object_storage, pause_broker, resume_broker, iceberg_op, kill_connect_worker, restart_connect_worker, restart_connector"`
+	Kind string `json:"kind" jsonschema:"one of: produce, kill_broker, restart_broker, add_broker, remove_broker, add_producer, remove_producer, add_group, remove_group, add_consumer, add_share_group, config_change, reassign_partition, change_replication_factor, set_replica_speed, tier_offload, kill_sr, restart_sr, sr_failover, restart_producer, set_sr_eligibility, stop_coordinator_db, start_coordinator_db, stop_etcd, start_etcd, stop_control_plane, start_control_plane, stop_object_storage, slow_object_storage, start_object_storage, pause_broker, resume_broker, iceberg_op, kill_connect_worker, restart_connect_worker, restart_connector"`
 	At   int    `json:"at" jsonschema:"simulation time in milliseconds at which the action fires; actions are replayed sorted by this value (>= 0). Space actions ~1000ms apart so the playground animates them one at a time"`
 
 	BrokerID string `json:"brokerId,omitempty" jsonschema:"broker id, e.g. broker-2 (kill_broker, restart_broker, add_broker, remove_broker, set_replica_speed, pause_broker, resume_broker). The default free-play cluster names brokers broker-1..broker-N"`
@@ -263,9 +263,17 @@ func toEntry(i int, a ActionInput) (actionlog.Entry, error) {
 		action = actionlog.StopEtcd{}
 	case "start_etcd":
 		action = actionlog.StartEtcd{}
+	// v2.3 (release stage next): WarpStream's hosted control plane
+	// (warpstream-3az), a no-op elsewhere. While it is down the playground
+	// refuses an Agent restart or a new Agent (warpstreamActionChecks).
+	case "stop_control_plane":
+		action = actionlog.StopControlPlane{}
+	case "start_control_plane":
+		action = actionlog.StartControlPlane{}
 	// v2.2 diskless object storage. No fields: they act on the bucket of every
 	// diskless implementation and are a no-op without diskless topics. On
-	// ursa-3az the playground refuses stop and slow (ursaActionChecks).
+	// ursa-3az and warpstream-3az the playground refuses stop and slow
+	// (ursaActionChecks, warpstreamActionChecks).
 	case "stop_object_storage":
 		action = actionlog.StopObjectStorage{}
 	case "slow_object_storage":
@@ -315,7 +323,7 @@ func toEntry(i int, a ActionInput) (actionlog.Entry, error) {
 	case "":
 		return fail("missing required field \"kind\"")
 	default:
-		return fail("unknown kind; expected one of produce, kill_broker, restart_broker, add_broker, remove_broker, add_producer, remove_producer, add_group, remove_group, add_consumer, add_share_group, config_change, reassign_partition, change_replication_factor, set_replica_speed, tier_offload, kill_sr, restart_sr, sr_failover, restart_producer, set_sr_eligibility, stop_coordinator_db, start_coordinator_db, stop_etcd, start_etcd, stop_object_storage, slow_object_storage, start_object_storage, pause_broker, resume_broker, iceberg_op, kill_connect_worker, restart_connect_worker, restart_connector")
+		return fail("unknown kind; expected one of produce, kill_broker, restart_broker, add_broker, remove_broker, add_producer, remove_producer, add_group, remove_group, add_consumer, add_share_group, config_change, reassign_partition, change_replication_factor, set_replica_speed, tier_offload, kill_sr, restart_sr, sr_failover, restart_producer, set_sr_eligibility, stop_coordinator_db, start_coordinator_db, stop_etcd, start_etcd, stop_control_plane, start_control_plane, stop_object_storage, slow_object_storage, start_object_storage, pause_broker, resume_broker, iceberg_op, kill_connect_worker, restart_connect_worker, restart_connector")
 	}
 
 	e := actionlog.Entry{At: a.At, Action: action}
@@ -459,6 +467,10 @@ func fromEntry(e actionlog.Entry) ActionInput {
 		out.Kind = "stop_etcd"
 	case actionlog.StartEtcd:
 		out.Kind = "start_etcd"
+	case actionlog.StopControlPlane:
+		out.Kind = "stop_control_plane"
+	case actionlog.StartControlPlane:
+		out.Kind = "start_control_plane"
 	case actionlog.StopObjectStorage:
 		out.Kind = "stop_object_storage"
 	case actionlog.SlowObjectStorage:

@@ -250,6 +250,47 @@ SIZE-IMPL ursa-3az 3x3x1xev~3~3~2~d~~~~~1xxxxxxxxxxxxxxxxxd => 3x3x1xev~3~1~1~d~
 SIZE-IMPL ursa-3az 3x3x1xev~3~1~1~c~~~~~1xxxxxxxxxxxxxxxxxd => 3x3x1xev~3~1~1~c~~~~xxxxxxxxxxxxxxxxxd :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"extraTopics":[{"name":"ev","partitions":3,"replicationFactor":1,"minInSyncReplicas":1,"cleanupPolicy":"compact"}],"primaryDiskless":true}
 SIZE-IMPL ursa-3az 3x3x1xpayments~1~1~1~d~~~~xxxxxxxxxxxxxxxxxd => 3x3x1xpayments-2~1~1~1~d~~~~xxxxxxxxxxxxxxxxxd :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"extraTopics":[{"name":"payments-2","partitions":1,"replicationFactor":1,"minInSyncReplicas":1,"cleanupPolicy":"delete"}],"primaryDiskless":true}
 SIZE-IMPL ursa-3az 3x3x1xxxxxxxxxxxxxxxxxx.900 => 3x3x1 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1}
+# 2026-11-23 (v2.3 WarpStream and Redpanda Cloud Topics, release stage next): SIZE-IMPL
+#   warpstream-3az and redpanda-3az lines, dumped the same way from the website's main
+#   (b671900f). Lines whose sides differ show what the playground rewrites. warpstream-3az:
+#   the Agent count is raised to 3 and capped at 6, RF is clamped to 1, a primary diskless
+#   flag is dropped, an extra topic always gets the diskless `~1`, and past one Agent per
+#   zone the per-Agent zone list (the cycle az-a, az-b, az-c, ...) is stored at tail index
+#   4. redpanda-3az: the broker count is capped at 9, RF at the broker count, partitions
+#   at 6, an extra topic's diskless `~1` and a primary diskless flag are dropped (every
+#   topic is a cloud topic by the cluster), and a diskless timing is kept with no diskless
+#   topic. On both, a primary min.ISR or cleanup equal to the default is dropped.
+SIZE-IMPL warpstream-3az 3x3x1 => 3x3x1 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1}
+SIZE-IMPL warpstream-3az 4x3x1 => 4x3x1xxxxxaz-a!az-b!az-c!az-a :: {"brokersPerZone":[4],"partitions":3,"replicationFactor":1,"racks":["az-a","az-b","az-c","az-a"]}
+SIZE-IMPL warpstream-3az 5x4x1 => 5x4x1xxxxxaz-a!az-b!az-c!az-a!az-b :: {"brokersPerZone":[5],"partitions":4,"replicationFactor":1,"racks":["az-a","az-b","az-c","az-a","az-b"]}
+SIZE-IMPL warpstream-3az 6x6x1 => 6x6x1xxxxxaz-a!az-b!az-c!az-a!az-b!az-c :: {"brokersPerZone":[6],"partitions":6,"replicationFactor":1,"racks":["az-a","az-b","az-c","az-a","az-b","az-c"]}
+SIZE-IMPL warpstream-3az 2x3x1 => 3x3x1 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1}
+SIZE-IMPL warpstream-3az 7x3x1 => 6x3x1xxxxxaz-a!az-b!az-c!az-a!az-b!az-c :: {"brokersPerZone":[6],"partitions":3,"replicationFactor":1,"racks":["az-a","az-b","az-c","az-a","az-b","az-c"]}
+SIZE-IMPL warpstream-3az 3x3x3 => 3x3x1 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1}
+SIZE-IMPL warpstream-3az 3x3x1xxxxxxxxxxxxxxxxxx250.900 => 3x3x1xxxxxxxxxxxxxxxxxx250.900 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"disklessTiming":{"commitIntervalMs":250,"uploadMs":900}}
+SIZE-IMPL warpstream-3az 3x3x1xxxxxxxxxxxxxxxxxxd => 3x3x1 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1}
+SIZE-IMPL warpstream-3az 3x3x1xev~2~1~1~d~~~~ => 3x3x1xev~2~1~1~d~~~~~1 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"extraTopics":[{"name":"ev","partitions":2,"replicationFactor":1,"minInSyncReplicas":1,"cleanupPolicy":"delete","disklessEnable":true}]}
+SIZE-IMPL warpstream-3az 3x3x1xev~2~3~2~d~~~~~1 => 3x3x1xev~2~1~1~d~~~~~1 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"extraTopics":[{"name":"ev","partitions":2,"replicationFactor":1,"minInSyncReplicas":1,"cleanupPolicy":"delete","disklessEnable":true}]}
+SIZE-IMPL warpstream-3az 4x2x1xev~1~1~1~d~~~~~1xxxxxxxxxxxxxxxxx.900 => 4x2x1xev~1~1~1~d~~~~~1xxxxaz-a!az-b!az-c!az-axxxxxxxxxxxxx.900 :: {"brokersPerZone":[4],"partitions":2,"replicationFactor":1,"extraTopics":[{"name":"ev","partitions":1,"replicationFactor":1,"minInSyncReplicas":1,"cleanupPolicy":"delete","disklessEnable":true}],"racks":["az-a","az-b","az-c","az-a"],"disklessTiming":{"uploadMs":900}}
+SIZE-IMPL warpstream-3az 3x3x1xxxx1x => 3x3x1xxxx1x :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"rackAware":true}
+SIZE-IMPL warpstream-3az 3x3x1xxxxxxxxxxxxxxx2 => 3x3x1xxxxxxxxxxxxxxx2 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"schemaRegistry":true,"srInstancesPerDc":1}
+SIZE-IMPL warpstream-3az 3x3x1xxxxxxxxxxx1~d~~~ => 3x3x1 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1}
+SIZE-IMPL redpanda-3az 3x6x3 => 3x6x3 :: {"brokersPerZone":[3],"partitions":6,"replicationFactor":3}
+SIZE-IMPL redpanda-3az 5x6x3 => 5x6x3 :: {"brokersPerZone":[5],"partitions":6,"replicationFactor":3}
+SIZE-IMPL redpanda-3az 9x6x3 => 9x6x3 :: {"brokersPerZone":[9],"partitions":6,"replicationFactor":3}
+SIZE-IMPL redpanda-3az 10x6x3 => 9x6x3 :: {"brokersPerZone":[9],"partitions":6,"replicationFactor":3}
+SIZE-IMPL redpanda-3az 3x6x4 => 3x6x3 :: {"brokersPerZone":[3],"partitions":6,"replicationFactor":3}
+SIZE-IMPL redpanda-3az 2x6x2 => 2x6x2 :: {"brokersPerZone":[2],"partitions":6,"replicationFactor":2}
+SIZE-IMPL redpanda-3az 1x3x1 => 1x3x1 :: {"brokersPerZone":[1],"partitions":3,"replicationFactor":1}
+SIZE-IMPL redpanda-3az 3x7x3 => 3x6x3 :: {"brokersPerZone":[3],"partitions":6,"replicationFactor":3}
+SIZE-IMPL redpanda-3az 3x4x3xxxxxxxxxxx3~d~~~ => 3x4x3xxxxxxxxxxx3~~~~ :: {"brokersPerZone":[3],"partitions":4,"replicationFactor":3,"primaryMinIsr":3}
+SIZE-IMPL redpanda-3az 3x6x3xev~2~3~2~d~~~~ => 3x6x3xev~2~3~2~d~~~~ :: {"brokersPerZone":[3],"partitions":6,"replicationFactor":3,"extraTopics":[{"name":"ev","partitions":2,"replicationFactor":3,"minInSyncReplicas":2,"cleanupPolicy":"delete"}]}
+SIZE-IMPL redpanda-3az 3x6x3xev~2~3~2~d~~~~~1 => 3x6x3xev~2~3~2~d~~~~ :: {"brokersPerZone":[3],"partitions":6,"replicationFactor":3,"extraTopics":[{"name":"ev","partitions":2,"replicationFactor":3,"minInSyncReplicas":2,"cleanupPolicy":"delete"}]}
+SIZE-IMPL redpanda-3az 3x6x3xxxxxxxxxxxxxxxxxx250.900 => 3x6x3xxxxxxxxxxxxxxxxxx250.900 :: {"brokersPerZone":[3],"partitions":6,"replicationFactor":3,"disklessTiming":{"commitIntervalMs":250,"uploadMs":900}}
+SIZE-IMPL redpanda-3az 3x6x3xxxxxxxxxxxxxxxxxx.900 => 3x6x3xxxxxxxxxxxxxxxxxx.900 :: {"brokersPerZone":[3],"partitions":6,"replicationFactor":3,"disklessTiming":{"uploadMs":900}}
+SIZE-IMPL redpanda-3az 3x6x3xxxxxxxxxxxxxxxxxxd => 3x6x3 :: {"brokersPerZone":[3],"partitions":6,"replicationFactor":3}
+SIZE-IMPL redpanda-3az 3x6x3xxxx1x => 3x6x3xxxx1x :: {"brokersPerZone":[3],"partitions":6,"replicationFactor":3,"rackAware":true}
+SIZE-IMPL redpanda-3az 3x6x3xxxxxxxxxxxxxxx2 => 3x6x3xxxxxxxxxxxxxxx2 :: {"brokersPerZone":[3],"partitions":6,"replicationFactor":3,"schemaRegistry":true,"srInstancesPerDc":1}
 # 2026-11-19 (v3.0 Streamhouse, release stage next): SIZE-SINK <raw> => <slug> :: <json size>
 #   = decodeFreePlaySize('streamhouse', <raw>), then "(default)" when isDefaultFreePlaySize
 #   holds (the playground omits size) or else encodeFreePlaySize, via a throwaway tsx script
