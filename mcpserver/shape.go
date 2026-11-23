@@ -30,7 +30,7 @@ type ClusterShape struct {
 	// freePlayTopologies.ts. Requires at least one topic with DisklessEnable
 	// (validateDisklessTiming); rejected otherwise, mirroring the TS store's
 	// "kept only when some topic is diskless" rule.
-	DisklessTiming *DisklessTimingShape `json:"disklessTiming,omitempty" jsonschema:"optional diskless timing override (v2.0+); requires a diskless topic (disklessEnable, or a diskless preset: diskless-3az, inkless-3az, kafscale-3b or automq-3az). kafscale-3b takes uploadMs only (KafScale has no commit interval); on automq-3az commitIntervalMs is the WAL batch interval"`
+	DisklessTiming *DisklessTimingShape `json:"disklessTiming,omitempty" jsonschema:"optional diskless timing override (v2.0+); requires a diskless topic (disklessEnable, or a diskless preset: diskless-3az, inkless-3az, kafscale-3b, automq-3az, or ursa-3az while a topic there is diskless). kafscale-3b takes uploadMs only (KafScale has no commit interval); on automq-3az commitIntervalMs is the WAL batch interval, on ursa-3az the write buffer close"`
 	// SchemaRegistry turns the session's schema registry on (size tail index
 	// 14). Mirrors FreePlaySize.schemaRegistry / srInstancesPerDc /
 	// srFollowerOnlyDcs in freePlayTopologies.ts.
@@ -83,8 +83,26 @@ type TopicShape struct {
 	// extraTopics chunk's 10th field. Rejected (validateTopicConfig) together
 	// with a compacted cleanupPolicy or on a mirror topology
 	// (active-passive/active-active), mirroring disklessAllowed in
-	// freePlayTopologies.ts.
-	DisklessEnable bool `json:"disklessEnable,omitempty" jsonschema:"optional KIP-1163 draft diskless.enable (v2.0+); not compatible with a compacted cleanupPolicy or a mirror topology. On kafscale-3b and automq-3az every topic is diskless already; on inkless-3az the primary 'orders' stays classic"`
+	// freePlayTopologies.ts. A pointer because ursa-3az's primary is diskless
+	// unless the shape says false: unset there is the preset's choice, not off.
+	// Everywhere else unset and false are the same.
+	DisklessEnable *bool `json:"disklessEnable,omitempty" jsonschema:"optional KIP-1163 draft diskless.enable (v2.0+); not compatible with a compacted cleanupPolicy or a mirror topology. On kafscale-3b and automq-3az every topic is diskless already; on inkless-3az the primary 'orders' stays classic. On ursa-3az it is ursa.storage.enable, chosen per topic: 'orders' is diskless unless this is false, any other topic is a disk topic unless this is true, and a diskless topic has replication factor 1"`
+}
+
+// disklessSet reports whether a topic asks for diskless.enable=true.
+func disklessSet(t TopicShape) bool { return t.DisklessEnable != nil && *t.DisklessEnable }
+
+// topicDiskless is a topic's effective diskless choice on topo: every topic on
+// KafScale and AutoMQ, the primary on ursa-3az unless the shape turns it off,
+// and otherwise whatever the topic asks for.
+func topicDiskless(topo topology, t TopicShape, isPrimary bool) bool {
+	if allDiskless(topo) {
+		return true
+	}
+	if isPrimary && topo.primaryDisklessDefault && t.DisklessEnable == nil {
+		return true
+	}
+	return disklessSet(t)
 }
 
 // topology mirrors the §10 table.
@@ -109,8 +127,13 @@ type topology struct {
 	fixedTopics []string
 	// impl is the diskless implementation the preset runs (v2.2,
 	// TEMPLATES[type].disklessImpl): "" for the KIP-1163 draft and the classic
-	// topologies, else "inkless", "kafscale" or "automq".
+	// topologies, else "inkless", "kafscale", "automq" or "ursa".
 	impl string
+	// primaryDisklessDefault is true when the preset's primary `orders` is
+	// diskless through the size's primary diskless flag (DEFAULT_FREE_PLAY_SIZE
+	// [type].primaryDiskless): ursa-3az. Its slugs then carry the flag `d` at
+	// tail index 17, since a slug without it decodes as a disk `orders`.
+	primaryDisklessDefault bool
 	// sink is true for the Streamhouse preset (v3.0, next; freePlayHasSink):
 	// the Iceberg Connect sink on `orders`, a Schema Registry from the
 	// template, classic topics only, and the sink knobs in tail index 18.
@@ -122,7 +145,11 @@ type topology struct {
 }
 
 // topologyOrder lists the topologies in the playground's own order, for errors.
-var topologyOrder = []string{"single-dc", "active-passive", "active-active", "stretched-2-5", "stretched-3", "diskless-3az", "inkless-3az", "kafscale-3b", "automq-3az", "streamhouse"}
+var topologyOrder = []string{"single-dc", "active-passive", "active-active", "stretched-2-5", "stretched-3", "diskless-3az", "inkless-3az", "kafscale-3b", "automq-3az", "ursa-3az", "streamhouse"}
+
+// ursaRF1Reason is URSA_RF1_REASON in the website's disklessImpl.ts: Ursa's
+// own rule for diskless topics.
+const ursaRF1Reason = "Ursa forces replication factor 1 on diskless topics; object storage holds the data"
 
 // allDiskless mirrors primaryDisklessByConstruction in freePlayTopologies.ts:
 // KafScale and AutoMQ have no classic topics, so every topic is diskless and
@@ -168,6 +195,13 @@ var topologies = map[string]topology{
 	// automq-3az: three brokers on AutoMQ cycling racks az-a/b/c, every topic
 	// S3-backed at RF 1 behind a per-broker WAL; six partitions by default.
 	"automq-3az": {slug: "automq-3az", zones: []string{"single"}, defaultBrokers: []int{3}, defaultPartitions: 6, defaultRF: 1, brokerCap: 9, partitionCap: 6, impl: "automq"},
+	// ursa-3az (v2.3, release stage next): three brokers on StreamNative Ursa
+	// for Kafka cycling racks az-a/b/c (rack-aware), three KRaft controllers,
+	// and a per-topic choice (ursa.storage.enable). `orders` is diskless at RF 1
+	// (the size's primary diskless flag); the fixed `payments` is a disk topic
+	// (3 partitions, RF 3, min.insync.replicas 2). At most 6 brokers
+	// (MAX_URSA_FREE_PLAY_BROKERS), the shared 6-partition cap.
+	"ursa-3az": {slug: "ursa-3az", zones: []string{"single"}, defaultBrokers: []int{3}, defaultPartitions: 3, defaultRF: 1, brokerCap: 6, partitionCap: 6, fixedTopics: []string{"payments"}, impl: "ursa", primaryDisklessDefault: true},
 	// v3.0 Streamhouse (release stage next): a classic single cluster with a
 	// Schema Registry, Kafka Connect and Apache Iceberg's sink connector
 	// orders-sink writing `orders` to the Iceberg table `orders`. It has the
@@ -340,15 +374,17 @@ func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam
 	}
 
 	partitions, rf := topo.defaultPartitions, topo.defaultRF
+	primaryDiskless := topo.primaryDisklessDefault || allDiskless(topo)
 	if primary != nil {
 		partitions, rf = primary.Partitions, primary.ReplicationFactor
+		primaryDiskless = topicDiskless(topo, *primary, true)
 	} else if m := rfMax(topo, brokers); rf > m {
 		// Default RF does not fit the requested (smaller) broker set; follow
 		// the §12 clamp rather than erroring on a field the caller never set.
 		rf = m
 		notes = append(notes, fmt.Sprintf("primary topic replication factor lowered to %d to fit %d broker(s)", rf, m))
 	}
-	if err := validateTopic(topo, brokers, partitions, rf); err != nil {
+	if err := validateTopic(topo, brokers, partitions, rf, primaryDiskless); err != nil {
 		return "", "", nil, fmt.Errorf("shape.topics (primary 'orders'): %w", err)
 	}
 	if primary != nil {
@@ -357,11 +393,20 @@ func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam
 		}
 	}
 	for _, t := range extras {
-		if err := validateTopic(topo, brokers, t.Partitions, t.ReplicationFactor); err != nil {
+		if err := validateTopic(topo, brokers, t.Partitions, t.ReplicationFactor, topicDiskless(topo, t, false)); err != nil {
 			return "", "", nil, fmt.Errorf("shape.topics (%q): %w", t.Name, err)
 		}
 		if err := validateTopicConfig(topo, t, false); err != nil {
 			return "", "", nil, fmt.Errorf("shape.topics (%q): %w", t.Name, err)
+		}
+	}
+	if topo.impl == "ursa" {
+		total := 0
+		for _, b := range brokers {
+			total += b
+		}
+		if total < 3 {
+			notes = append(notes, fmt.Sprintf("the preset's disk topic payments (3 partitions, RF 3, min.insync.replicas 2) is created at RF %d on %d broker(s), min.insync.replicas %d", total, total, min(2, total)))
 		}
 	}
 
@@ -373,9 +418,9 @@ func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam
 	base := strings.Join(zoneParts, "-") + "x" + strconv.Itoa(partitions) + "x" + strconv.Itoa(rf)
 
 	// --- diskless timing (KIP-1163 draft, v2.0+) -------------
-	anyDiskless := (primary != nil && primary.DisklessEnable) || topo.templateDiskless || allDiskless(topo)
+	anyDiskless := primaryDiskless || topo.templateDiskless || allDiskless(topo)
 	for _, t := range extras {
-		if t.DisklessEnable {
+		if disklessSet(t) {
 			anyDiskless = true
 		}
 	}
@@ -412,7 +457,7 @@ func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam
 	if len(extras) > 0 {
 		chunks := make([]string, len(extras))
 		for i, t := range extras {
-			chunks[i] = topicChunk(t, allDiskless(topo))
+			chunks[i] = topicChunk(t, topicDiskless(topo, t, false))
 		}
 		tail[0] = strings.Join(chunks, "!")
 	}
@@ -431,11 +476,12 @@ func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam
 	if shape.DisklessTiming != nil {
 		commitMs, uploadMs = shape.DisklessTiming.CommitIntervalMs, shape.DisklessTiming.UploadMs
 	}
-	// The primary diskless flag exists only for the KIP-1163 draft: on KafScale
-	// and AutoMQ the primary is diskless by construction and the playground
-	// drops the flag, so writing it would not be canonical.
-	primaryDiskless := primary != nil && primary.DisklessEnable && topo.impl == ""
-	if disklessEnc := mapping.EncodeDisklessTail(primaryDiskless, commitMs, uploadMs); disklessEnc != "" {
+	// The primary diskless flag exists only for the KIP-1163 draft and Ursa: on
+	// KafScale and AutoMQ the primary is diskless by construction and the
+	// playground drops the flag, so writing it would not be canonical. On Ursa
+	// the flag is what makes `orders` diskless, so it is written whenever it is.
+	primaryFlag := primaryDiskless && (topo.impl == "" || topo.impl == "ursa")
+	if disklessEnc := mapping.EncodeDisklessTail(primaryFlag, commitMs, uploadMs); disklessEnc != "" {
 		tail[17] = disklessEnc
 	}
 	if sinkEnc != "" {
@@ -480,6 +526,10 @@ func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam
 		// The Streamhouse default includes the preset's registry (index 14).
 		defaultBase += strings.Repeat("x", 15) + "1"
 	}
+	if topo.primaryDisklessDefault {
+		// The Ursa default carries the primary diskless flag (index 17).
+		defaultBase += strings.Repeat("x", 18) + "d"
+	}
 	if slug == defaultBase {
 		return clusterParam, "", notes, nil
 	}
@@ -518,7 +568,7 @@ func resolveBrokers(topo topology, shape *ClusterShape) ([]int, error) {
 	return brokers, nil
 }
 
-func validateTopic(topo topology, brokers []int, partitions, rf int) error {
+func validateTopic(topo topology, brokers []int, partitions, rf int, diskless bool) error {
 	if partitions < 1 {
 		return fmt.Errorf("partitions %d must be >= 1", partitions)
 	}
@@ -527,6 +577,11 @@ func validateTopic(topo topology, brokers []int, partitions, rf int) error {
 	}
 	if allDiskless(topo) && rf > 1 {
 		return fmt.Errorf("replicationFactor %d: every topic on %s has replication factor 1, since S3 holds the data", rf, topo.slug)
+	}
+	// Ursa holds a diskless topic at RF 1 (freePlayTopicRfMax), disk topics
+	// take any factor.
+	if topo.impl == "ursa" && diskless && rf > 1 {
+		return fmt.Errorf("replicationFactor %d: %s (set disklessEnable false for a disk topic with replicas)", rf, ursaRF1Reason)
 	}
 	if m := rfMax(topo, brokers); rf > m {
 		return fmt.Errorf("replicationFactor %d exceeds the maximum %d for this broker layout (§12)", rf, m)
@@ -569,7 +624,16 @@ func validateTopicConfig(topo topology, t TopicShape, isPrimary bool) error {
 		}
 		return nil
 	}
-	if t.DisklessEnable {
+	// Ursa: ursa.storage.enable with a compacted cleanup policy is refused
+	// (diskless.ts validateDisklessConfig), and the playground builds such a
+	// topic as a disk topic (disklessAllowed), so the shape refuses it.
+	if topo.impl == "ursa" {
+		if topicDiskless(topo, t, isPrimary) && strings.Contains(t.CleanupPolicy, "compact") {
+			return fmt.Errorf("cleanupPolicy %q: Ursa does not support compacted diskless topics yet; disk topics support them (set disklessEnable false)", t.CleanupPolicy)
+		}
+		return nil
+	}
+	if disklessSet(t) {
 		// D5: the Iceberg sink runs on classic topics only, so the playground
 		// drops the flag on Streamhouse (disklessAllowed).
 		if topo.sink {
@@ -598,7 +662,7 @@ func validateDisklessTiming(topo topology, dt *DisklessTimingShape, anyDiskless 
 		return nil
 	}
 	if !anyDiskless {
-		return fmt.Errorf("requires a diskless topic (disklessEnable, or a diskless preset: diskless-3az, inkless-3az, kafscale-3b or automq-3az) (KIP-1163 draft, v2.0+)")
+		return fmt.Errorf("requires a diskless topic (disklessEnable, or a diskless preset: diskless-3az, inkless-3az, kafscale-3b, automq-3az, or ursa-3az with a diskless topic) (KIP-1163 draft, v2.0+)")
 	}
 	if dt.CommitIntervalMs != nil && !hasCommitInterval(topo) {
 		return fmt.Errorf("commitIntervalMs: %s has no commit interval (KafScale flushes the segment per produce request); set uploadMs only", topo.slug)
@@ -643,7 +707,7 @@ func topicChunk(t TopicShape, forceDiskless bool) string {
 		cleanup,
 		"", "", "", "",
 	}, "~")
-	if t.DisklessEnable || forceDiskless {
+	if disklessSet(t) || forceDiskless {
 		chunk += "~1"
 	}
 	return chunk

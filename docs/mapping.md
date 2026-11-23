@@ -424,10 +424,10 @@ cluster:
 | `stop_coordinator_db` / `start_coordinator_db` | `DB:0` / `DB:1` | the Inkless PostgreSQL batch coordinator (`inkless-3az`) |
 | `stop_etcd` / `start_etcd` | `ET:0` / `ET:1` | KafScale's etcd, which holds the metadata and partition leases (`kafscale-3b`) |
 
-Two more pause and resume one KafScale broker. They take `brokerId` (the
-`<broker>` in the code) and are a no-op on any cluster other than
-`kafscale-3b`, on a dead or paused broker (pause) and on a
-running one (resume):
+Two more pause and resume one KafScale broker (and, from v2.3, an Ursa broker:
+see *Ursa for Kafka* below). They take `brokerId` (the `<broker>` in the code)
+and are a no-op on any cluster other than `kafscale-3b` and `ursa-3az`, on a
+dead or paused broker (pause) and on a running one (resume):
 
 | Action kind | Code | Notes |
 |---|---|---|
@@ -450,6 +450,61 @@ Any other `OS` payload is an error here; the playground drops it.
 
 A deployment of the playground older than v2.2 falls back to single-dc for
 these `cluster` values and drops the codes.
+
+## Ursa for Kafka: `ursa-3az` (v2.3, `next`)
+
+The simulator's v2.3 adds StreamNative Ursa for Kafka, at release stage `next`:
+the public playground does not offer the `freeplay.ursa` feature yet and opens
+`cluster=ursa-3az` as single-dc. `connect` never emits it. The MCP
+`build_playground_url` tool takes `cluster: "ursa-3az"`:
+
+| `cluster` | Default `size` | What it opens |
+|---|---|---|
+| `ursa-3az` | `3x3x1` and the flag `d` (omitted from the URL) | 3 Ursa brokers cycling racks `az-a`, `az-b`, `az-c` (rack-aware) and 3 KRaft controllers. `orders` is diskless (`ursa.storage.enable=true`): 3 partitions at replication factor 1; a producer writes through a zonal owner in its own zone, the owner buffers many partitions into one WAL object, Oxia assigns the offsets at commit, and a compaction service rewrites WAL objects as Parquet every 2 s. The preset's `payments` is a disk topic: 3 partitions, RF 3, `min.insync.replicas` 2. Producers `p-a` (orders, `client.id` `zone_id=az-a`, idempotent), `p-c` (orders, `zone_id=az-c`, not idempotent) and `p-pay` (payments, `zone_id=az-b`, idempotent), all `acks=all`; group `g-orders` with member `c1` (`zone_id=az-b`) reads orders. Diskless timing 500 ms buffer close, 600 ms upload, 200 ms Oxia commit. |
+
+Ursa chooses per topic, so `disklessEnable` is `ursa.storage.enable` there:
+`orders` is diskless unless the shape sets it to `false`, and any other topic is
+a disk topic unless the shape sets it to `true`. A client's zone is its
+`zone_id` inside `client.id`, not `client.rack`; the shape describes no clients,
+so it sets none. In the size slug, the primary diskless flag (`d`, tail index
+17) is what makes `orders` diskless: a slug without it opens a disk `orders`, so
+every shaped slug with a diskless `orders` carries it (`4x3x1xxxxxxxxxxxxxxxxxxd`
+on 4 brokers). The shape refuses what the playground would rewrite:
+
+- a diskless topic with a replication factor above 1 ("Ursa forces replication
+  factor 1 on diskless topics; object storage holds the data");
+- a diskless topic with a compacted cleanup policy (Ursa does not support
+  compacted diskless topics yet; disk topics support them);
+- more than 6 brokers (two per zone) or 6 partitions per topic, and an extra
+  topic named `payments`;
+- `disklessTiming` when no topic is diskless. Both fields apply:
+  `commitIntervalMs` is the write buffer close, `uploadMs` the WAL upload.
+
+With fewer than 3 brokers the playground creates `payments` at a replication
+factor equal to the broker count, and a note says so.
+
+The broker actions apply as on any cluster: `kill_broker`, `restart_broker`
+and, with the KafScale codes `BP`/`BU`, `pause_broker` and `resume_broker`. A
+paused Ursa broker keeps its diskless partitions for 5 s of missed heartbeats,
+then is marked offline and its clients move to another owner. The playground's
+engine refuses some actions on `ursa-3az` (it logs `admin_rejected` with
+`InvalidConfigurationException` and changes nothing), and
+`build_playground_url` refuses them up front with the engine's copy:
+
+| Action | Refused when | Engine copy |
+|---|---|---|
+| `stop_object_storage`, `slow_object_storage` | always (`start_object_storage` does nothing there) | Ursa's sources do not describe what brokers do when object storage is unavailable or slow, so the simulator does not model it. |
+| `pause_broker` | the broker holds any replica of a disk-topic partition. On a starting cluster of at most 3 brokers every starting broker holds all of `payments`, so the pause is refused unless a `reassign_partition` or `change_replication_factor` comes first; add a broker with `add_broker` and pause that one. On more brokers the outcome depends on replica placement, which this tool does not compute, so the response carries a note instead. | The simulator pauses Ursa brokers that hold only diskless partitions; `<broker>` holds disk-topic replicas (...) |
+| `add_share_group` | its topic is diskless | Share groups on diskless topics are refused as the simulator's limit (Ursa supports them). |
+
+The engine also refuses network partitions and an Oxia outage on Ursa; sim-link
+has no action kind for either. The slugs are pinned by the `SIZE-IMPL ursa-3az`
+lines in `mapping/testdata/ts-fixtures.txt`, dumped from the simulator's codec.
+
+`open_scenario` takes the Ursa for Kafka track, 13.1.1-13.1.5, also at release
+stage `next`: 13.1.1 the write path, 13.1.2 zones and the zonal owner, 13.1.3
+from WAL to Parquet, 13.1.4 a broker dies and a broker goes silent, 13.1.5
+diskless and disk topics side by side.
 
 ## Streamhouse: `IO`/`KCW`/`RCW`/`RCN` and the Connect sink (v3.0, `next`)
 

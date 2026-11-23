@@ -147,14 +147,14 @@ func TestShapeDiskless(t *testing.T) {
 			"extra topic disklessEnable", "",
 			&ClusterShape{Brokers: 10, Topics: []TopicShape{
 				{Name: "orders", Partitions: 1, ReplicationFactor: 1},
-				{Name: "wal", Partitions: 4, ReplicationFactor: 3, MinInSyncReplicas: intp(1), CleanupPolicy: "delete", DisklessEnable: true},
+				{Name: "wal", Partitions: 4, ReplicationFactor: 3, MinInSyncReplicas: intp(1), CleanupPolicy: "delete", DisklessEnable: boolp(true)},
 			}},
 			"", "10x1x1xwal~4~3~1~d~~~~~1",
 		},
 		{
 			"primary disklessEnable flag only", "",
 			&ClusterShape{Brokers: 5, Topics: []TopicShape{
-				{Name: "orders", Partitions: 4, ReplicationFactor: 3, DisklessEnable: true},
+				{Name: "orders", Partitions: 4, ReplicationFactor: 3, DisklessEnable: boolp(true)},
 			}},
 			"", "5x4x3xxxxxxxxxxxxxxxxxxd",
 		},
@@ -162,7 +162,7 @@ func TestShapeDiskless(t *testing.T) {
 			"diskless-3az extra topic", "diskless-3az",
 			&ClusterShape{Brokers: 6, Topics: []TopicShape{
 				{Name: "orders", Partitions: 3, ReplicationFactor: 3},
-				{Name: "clicks2", Partitions: 3, ReplicationFactor: 3, MinInSyncReplicas: intp(2), CleanupPolicy: "delete", DisklessEnable: true},
+				{Name: "clicks2", Partitions: 3, ReplicationFactor: 3, MinInSyncReplicas: intp(2), CleanupPolicy: "delete", DisklessEnable: boolp(true)},
 			}},
 			"diskless-3az", "6x3x3xclicks2~3~3~2~d~~~~~1",
 		},
@@ -172,7 +172,7 @@ func TestShapeDiskless(t *testing.T) {
 			//  primaryDiskless:true,disklessTiming:{commitIntervalMs:250,uploadMs:600}}.
 			"primary disklessEnable + full timing", "",
 			&ClusterShape{Brokers: 5, Topics: []TopicShape{
-				{Name: "orders", Partitions: 4, ReplicationFactor: 3, DisklessEnable: true},
+				{Name: "orders", Partitions: 4, ReplicationFactor: 3, DisklessEnable: boolp(true)},
 			}, DisklessTiming: &DisklessTimingShape{CommitIntervalMs: intp(250), UploadMs: intp(600)}},
 			"", "5x4x3xxxxxxxxxxxxxxxxxxd250.600",
 		},
@@ -182,7 +182,7 @@ func TestShapeDiskless(t *testing.T) {
 			"extra topic disklessEnable + upload-only timing", "",
 			&ClusterShape{Brokers: 5, Topics: []TopicShape{
 				{Name: "orders", Partitions: 4, ReplicationFactor: 3},
-				{Name: "wal", Partitions: 4, ReplicationFactor: 3, MinInSyncReplicas: intp(1), CleanupPolicy: "delete", DisklessEnable: true},
+				{Name: "wal", Partitions: 4, ReplicationFactor: 3, MinInSyncReplicas: intp(1), CleanupPolicy: "delete", DisklessEnable: boolp(true)},
 			}, DisklessTiming: &DisklessTimingShape{UploadMs: intp(900)}},
 			"", "5x4x3xwal~4~3~1~d~~~~~1xxxxxxxxxxxxxxxxx.900",
 		},
@@ -226,19 +226,19 @@ func TestShapeDisklessTimingBoundary(t *testing.T) {
 	}{
 		{
 			"commitIntervalMs 100 (min, inclusive)",
-			&ClusterShape{Brokers: 3, Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 3, DisklessEnable: true}}, DisklessTiming: &DisklessTimingShape{CommitIntervalMs: intp(100)}},
+			&ClusterShape{Brokers: 3, Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 3, DisklessEnable: boolp(true)}}, DisklessTiming: &DisklessTimingShape{CommitIntervalMs: intp(100)}},
 		},
 		{
 			"commitIntervalMs 5000 (max, inclusive)",
-			&ClusterShape{Brokers: 3, Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 3, DisklessEnable: true}}, DisklessTiming: &DisklessTimingShape{CommitIntervalMs: intp(5000)}},
+			&ClusterShape{Brokers: 3, Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 3, DisklessEnable: boolp(true)}}, DisklessTiming: &DisklessTimingShape{CommitIntervalMs: intp(5000)}},
 		},
 		{
 			"uploadMs 100 (min, inclusive)",
-			&ClusterShape{Brokers: 3, Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 3, DisklessEnable: true}}, DisklessTiming: &DisklessTimingShape{UploadMs: intp(100)}},
+			&ClusterShape{Brokers: 3, Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 3, DisklessEnable: boolp(true)}}, DisklessTiming: &DisklessTimingShape{UploadMs: intp(100)}},
 		},
 		{
 			"uploadMs 5000 (max, inclusive)",
-			&ClusterShape{Brokers: 3, Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 3, DisklessEnable: true}}, DisklessTiming: &DisklessTimingShape{UploadMs: intp(5000)}},
+			&ClusterShape{Brokers: 3, Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 3, DisklessEnable: boolp(true)}}, DisklessTiming: &DisklessTimingShape{UploadMs: intp(5000)}},
 		},
 	}
 	for _, tc := range cases {
@@ -295,8 +295,8 @@ func TestShapeValidationErrors(t *testing.T) {
 		{"stretched-3 strips", "stretched-3", &ClusterShape{BrokersPerZone: []int{1, 1, 1}, Topics: []TopicShape{{Name: "orders", Partitions: 4, ReplicationFactor: 3}}}, []string{"4", "3"}},
 		{"cap diskless-3az", "diskless-3az", &ClusterShape{Brokers: 10}, []string{"10", "9"}},
 		{"partition cap diskless-3az", "diskless-3az", &ClusterShape{Brokers: 6, Topics: []TopicShape{{Name: "orders", Partitions: 7, ReplicationFactor: 3}}}, []string{"7", "6"}},
-		{"diskless + compact", "", &ClusterShape{Brokers: 3, Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 3, CleanupPolicy: "compact", DisklessEnable: true}}}, []string{"disklessEnable", "compact"}},
-		{"diskless on mirror topology", "active-passive", &ClusterShape{BrokersPerZone: []int{2, 2}, Topics: []TopicShape{{Name: "orders", Partitions: 1, ReplicationFactor: 2, DisklessEnable: true}}}, []string{"disklessEnable", "mirror", "active-passive"}},
+		{"diskless + compact", "", &ClusterShape{Brokers: 3, Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 3, CleanupPolicy: "compact", DisklessEnable: boolp(true)}}}, []string{"disklessEnable", "compact"}},
+		{"diskless on mirror topology", "active-passive", &ClusterShape{BrokersPerZone: []int{2, 2}, Topics: []TopicShape{{Name: "orders", Partitions: 1, ReplicationFactor: 2, DisklessEnable: boolp(true)}}}, []string{"disklessEnable", "mirror", "active-passive"}},
 		{
 			"disklessTiming without a diskless topic", "",
 			&ClusterShape{Brokers: 3, Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 3}}, DisklessTiming: &DisklessTimingShape{CommitIntervalMs: intp(250)}},
@@ -304,12 +304,12 @@ func TestShapeValidationErrors(t *testing.T) {
 		},
 		{
 			"disklessTiming commitIntervalMs out of range", "",
-			&ClusterShape{Brokers: 3, Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 3, DisklessEnable: true}}, DisklessTiming: &DisklessTimingShape{CommitIntervalMs: intp(50)}},
+			&ClusterShape{Brokers: 3, Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 3, DisklessEnable: boolp(true)}}, DisklessTiming: &DisklessTimingShape{CommitIntervalMs: intp(50)}},
 			[]string{"commitIntervalMs 50", "100", "5000"},
 		},
 		{
 			"disklessTiming uploadMs out of range", "",
-			&ClusterShape{Brokers: 3, Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 3, DisklessEnable: true}}, DisklessTiming: &DisklessTimingShape{UploadMs: intp(9000)}},
+			&ClusterShape{Brokers: 3, Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 3, DisklessEnable: boolp(true)}}, DisklessTiming: &DisklessTimingShape{UploadMs: intp(9000)}},
 			[]string{"uploadMs 9000", "100", "5000"},
 		},
 	}
@@ -605,7 +605,7 @@ func TestShapeSchemaRegistryCombinesWithOtherSegments(t *testing.T) {
 		t.Fatalf("rack-aware + registry: size %q err %v", size, err)
 	}
 	// A diskless primary (index 17) extends the tail past the registry.
-	_, size, _, err = shapeToParams("", &ClusterShape{Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 3, DisklessEnable: true}}, SchemaRegistry: &SchemaRegistryShape{InstancesPerDc: 2}})
+	_, size, _, err = shapeToParams("", &ClusterShape{Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 3, DisklessEnable: boolp(true)}}, SchemaRegistry: &SchemaRegistryShape{InstancesPerDc: 2}})
 	if err != nil || size != "3x3x3xxxxxxxxxxxxxxx3xxxd" {
 		t.Fatalf("diskless + registry: size %q err %v", size, err)
 	}
@@ -617,8 +617,9 @@ func TestShapeSchemaRegistryCombinesWithOtherSegments(t *testing.T) {
 }
 
 // TestShapeImplMatchesTypeScriptFixtures replays the SIZE-IMPL lines of
-// mapping/testdata/ts-fixtures.txt (v2.2), dumped from the real TypeScript
-// codec for the inkless-3az, kafscale-3b and automq-3az presets: the shape the
+// mapping/testdata/ts-fixtures.txt (v2.2, and v2.3 for ursa-3az), dumped from
+// the real TypeScript codec for the inkless-3az, kafscale-3b, automq-3az and
+// ursa-3az presets: the shape the
 // playground decodes from a slug must come back out of shapeToParams as the
 // slug the playground itself re-encodes (or no size at all for the preset
 // default).
@@ -653,19 +654,27 @@ func TestShapeImplMatchesTypeScriptFixtures(t *testing.T) {
 			DisklessTiming   *DisklessTimingShape `json:"disklessTiming"`
 			SrInstancesPerDc int                  `json:"srInstancesPerDc"`
 			SchemaRegistry   bool                 `json:"schemaRegistry"`
+			PrimaryDiskless  bool                 `json:"primaryDiskless"`
+			PrimaryMinIsr    *int                 `json:"primaryMinIsr"`
+			PrimaryCleanup   string               `json:"primaryCleanup"`
+			RackAware        bool                 `json:"rackAware"`
 		}
 		if err := json.Unmarshal([]byte(js), &sz); err != nil {
 			t.Fatalf("%s %s: size json: %v", typ, want, err)
 		}
 		shape := &ClusterShape{
 			BrokersPerZone: sz.BrokersPerZone,
-			Topics:         []TopicShape{{Name: "orders", Partitions: sz.Partitions, ReplicationFactor: sz.ReplicationFactor}},
+			Topics: []TopicShape{{
+				Name: "orders", Partitions: sz.Partitions, ReplicationFactor: sz.ReplicationFactor,
+				MinInSyncReplicas: sz.PrimaryMinIsr, CleanupPolicy: sz.PrimaryCleanup, DisklessEnable: boolp(sz.PrimaryDiskless),
+			}},
 			DisklessTiming: sz.DisklessTiming,
+			RackAware:      sz.RackAware,
 		}
 		for _, e := range sz.ExtraTopics {
 			shape.Topics = append(shape.Topics, TopicShape{
 				Name: e.Name, Partitions: e.Partitions, ReplicationFactor: e.ReplicationFactor,
-				MinInSyncReplicas: intp(e.MinInSyncReplicas), CleanupPolicy: e.CleanupPolicy, DisklessEnable: e.DisklessEnable,
+				MinInSyncReplicas: intp(e.MinInSyncReplicas), CleanupPolicy: e.CleanupPolicy, DisklessEnable: boolp(e.DisklessEnable),
 			})
 		}
 		if sz.SchemaRegistry {
@@ -677,7 +686,11 @@ func TestShapeImplMatchesTypeScriptFixtures(t *testing.T) {
 			continue
 		}
 		topo := topologies[typ]
-		if want == fmt.Sprintf("%dx%dx%d", topo.defaultBrokers[0], topo.defaultPartitions, topo.defaultRF) {
+		def := fmt.Sprintf("%dx%dx%d", topo.defaultBrokers[0], topo.defaultPartitions, topo.defaultRF)
+		if topo.primaryDisklessDefault {
+			def += strings.Repeat("x", 18) + "d" // ursa-3az: the default's diskless orders
+		}
+		if want == def {
 			want = "" // the preset default is omitted from the URL
 		}
 		if cluster != typ || size != want {
@@ -685,8 +698,8 @@ func TestShapeImplMatchesTypeScriptFixtures(t *testing.T) {
 		}
 		checked++
 	}
-	if checked != 16 {
-		t.Fatalf("replayed %d SIZE-IMPL fixtures, want 16", checked)
+	if checked != 37 {
+		t.Fatalf("replayed %d SIZE-IMPL fixtures, want 37", checked)
 	}
 }
 
@@ -703,8 +716,8 @@ func TestShapeImplPresets(t *testing.T) {
 		{"kafscale-3b", &ClusterShape{}, ""},
 		{"automq-3az", &ClusterShape{Brokers: 3}, ""},
 		// Diskless by construction: the flag on orders changes nothing.
-		{"automq-3az", &ClusterShape{Topics: []TopicShape{{Name: "orders", Partitions: 6, ReplicationFactor: 1, DisklessEnable: true}}}, ""},
-		{"kafscale-3b", &ClusterShape{Topics: []TopicShape{{Name: "orders", Partitions: 2, ReplicationFactor: 1, DisklessEnable: true}}}, "3x2x1"},
+		{"automq-3az", &ClusterShape{Topics: []TopicShape{{Name: "orders", Partitions: 6, ReplicationFactor: 1, DisklessEnable: boolp(true)}}}, ""},
+		{"kafscale-3b", &ClusterShape{Topics: []TopicShape{{Name: "orders", Partitions: 2, ReplicationFactor: 1, DisklessEnable: boolp(true)}}}, "3x2x1"},
 		// An extra topic is diskless there without disklessEnable.
 		{"kafscale-3b", &ClusterShape{Topics: []TopicShape{{Name: "ev", Partitions: 1, ReplicationFactor: 1}}}, "3x3x1xev~1~1~1~d~~~~~1"},
 		// Inkless: a timing alone is fine (clicks is diskless), on 9 brokers.
@@ -734,7 +747,7 @@ func TestShapeImplValidation(t *testing.T) {
 		{"kafscale commit interval", "kafscale-3b", &ClusterShape{DisklessTiming: &DisklessTimingShape{CommitIntervalMs: intp(250), UploadMs: intp(900)}}, []string{"shape.disklessTiming", "commitIntervalMs", "no commit interval"}},
 		{"automq compacted", "automq-3az", &ClusterShape{Topics: []TopicShape{{Name: "ev", Partitions: 1, ReplicationFactor: 1, CleanupPolicy: "compact"}}}, []string{"\"ev\"", "compacted", "automq-3az"}},
 		{"kafscale compacted primary", "kafscale-3b", &ClusterShape{Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 1, CleanupPolicy: "compact,delete"}}}, []string{"primary 'orders'", "compacted"}},
-		{"inkless diskless primary", "inkless-3az", &ClusterShape{Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 3, DisklessEnable: true}}}, []string{"disklessEnable", "stays a classic topic"}},
+		{"inkless diskless primary", "inkless-3az", &ClusterShape{Topics: []TopicShape{{Name: "orders", Partitions: 3, ReplicationFactor: 3, DisklessEnable: boolp(true)}}}, []string{"disklessEnable", "stays a classic topic"}},
 		{"inkless clicks taken", "inkless-3az", &ClusterShape{Topics: []TopicShape{{Name: "clicks", Partitions: 1, ReplicationFactor: 1}}}, []string{"\"clicks\"", "already has a topic"}},
 		{"diskless-3az clicks taken", "diskless-3az", &ClusterShape{Topics: []TopicShape{{Name: "clicks", Partitions: 1, ReplicationFactor: 1}}}, []string{"\"clicks\"", "already has a topic"}},
 		{"too many brokers", "automq-3az", &ClusterShape{Brokers: 10}, []string{"10 total brokers", "cap of 9"}},

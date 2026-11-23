@@ -400,8 +400,9 @@ func TestOpenScenario(t *testing.T) {
 
 	// The KafScale 2.0 scenarios of simulator v2.2: the write path 08.1.1 and
 	// 08.2.1-08.2.7 (the playground opens a retired 08.1.2-08.1.5 link as its
-	// 2.0 counterpart).
-	for _, id := range []string{"08.1.1", "08.2.1", "08.2.2", "08.2.3", "08.2.4", "08.2.5", "08.2.6", "08.2.7"} {
+	// 2.0 counterpart), and the Ursa for Kafka scenarios 13.1.1-13.1.5 (release
+	// stage next).
+	for _, id := range []string{"08.1.1", "08.2.1", "08.2.2", "08.2.3", "08.2.4", "08.2.5", "08.2.6", "08.2.7", "13.1.1", "13.1.2", "13.1.3", "13.1.4", "13.1.5"} {
 		res := callTool(t, s, "open_scenario", map[string]any{"scenarioId": id})
 		var out OpenScenarioOutput
 		structured(t, res, &out)

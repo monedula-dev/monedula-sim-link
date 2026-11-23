@@ -221,6 +221,35 @@ SIZE-IMPL automq-3az 4x6x1xxxxxxxxxxxxxxxxxx250.900 => 4x6x1xxxxxxxxxxxxxxxxxx25
 SIZE-IMPL automq-3az 3x6x1xev~2~1~1~d~~~~ => 3x6x1xev~2~1~1~d~~~~~1 :: {"brokersPerZone":[3],"partitions":6,"replicationFactor":1,"extraTopics":[{"name":"ev","partitions":2,"replicationFactor":1,"minInSyncReplicas":1,"cleanupPolicy":"delete","disklessEnable":true}]}
 SIZE-IMPL automq-3az 3x6x1xxxxxxxxxxxxxxx2 => 3x6x1xxxxxxxxxxxxxxx2 :: {"brokersPerZone":[3],"partitions":6,"replicationFactor":1,"schemaRegistry":true,"srInstancesPerDc":1}
 SIZE-IMPL automq-3az 3x6x1xxxxxxxxxxxxxxxxxxd => 3x6x1 :: {"brokersPerZone":[3],"partitions":6,"replicationFactor":1}
+# 2026-11-23 (v2.3 Ursa for Kafka, release stage next): SIZE-IMPL ursa-3az lines, dumped
+#   the same way from the website's main (2d363ab0). The size's primary diskless flag `d`
+#   (tail index 17) is what makes `orders` diskless there, so every shaped slug with a
+#   diskless `orders` carries it, and the preset default is 3x3x1 plus that flag. Lines
+#   whose sides differ show what the playground rewrites: a diskless topic's RF is clamped
+#   to 1, a compacted topic loses ursa.storage.enable, an extra topic named payments (the
+#   preset's disk topic) is renamed, the broker count is capped at 6, and a diskless timing
+#   with no diskless topic is dropped.
+SIZE-IMPL ursa-3az 3x3x1xxxxxxxxxxxxxxxxxxd => 3x3x1xxxxxxxxxxxxxxxxxxd :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"primaryDiskless":true}
+SIZE-IMPL ursa-3az 4x3x1xxxxxxxxxxxxxxxxxxd => 4x3x1xxxxxxxxxxxxxxxxxxd :: {"brokersPerZone":[4],"partitions":3,"replicationFactor":1,"primaryDiskless":true}
+SIZE-IMPL ursa-3az 6x6x1xxxxxxxxxxxxxxxxxxd => 6x6x1xxxxxxxxxxxxxxxxxxd :: {"brokersPerZone":[6],"partitions":6,"replicationFactor":1,"primaryDiskless":true}
+SIZE-IMPL ursa-3az 3x3x3 => 3x3x3 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":3}
+SIZE-IMPL ursa-3az 3x3x1 => 3x3x1 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1}
+SIZE-IMPL ursa-3az 3x3x1xxxxxxxxxxxxxxxxxxd250.900 => 3x3x1xxxxxxxxxxxxxxxxxxd250.900 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"primaryDiskless":true,"disklessTiming":{"commitIntervalMs":250,"uploadMs":900}}
+SIZE-IMPL ursa-3az 3x3x3xev~2~1~1~d~~~~~1xxxxxxxxxxxxxxxxx.900 => 3x3x3xev~2~1~1~d~~~~~1xxxxxxxxxxxxxxxxx.900 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":3,"extraTopics":[{"name":"ev","partitions":2,"replicationFactor":1,"minInSyncReplicas":1,"cleanupPolicy":"delete","disklessEnable":true}],"disklessTiming":{"uploadMs":900}}
+SIZE-IMPL ursa-3az 3x3x1xev~3~3~2~c~~~~xxxxxxxxxxxxxxxxxd => 3x3x1xev~3~3~2~c~~~~xxxxxxxxxxxxxxxxxd :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"extraTopics":[{"name":"ev","partitions":3,"replicationFactor":3,"minInSyncReplicas":2,"cleanupPolicy":"compact"}],"primaryDiskless":true}
+SIZE-IMPL ursa-3az 3x3x1xev~3~1~1~d~~~~~1xxxxxxxxxxxxxxxxxd => 3x3x1xev~3~1~1~d~~~~~1xxxxxxxxxxxxxxxxxd :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"extraTopics":[{"name":"ev","partitions":3,"replicationFactor":1,"minInSyncReplicas":1,"cleanupPolicy":"delete","disklessEnable":true}],"primaryDiskless":true}
+SIZE-IMPL ursa-3az 3x3x1xxxx1xxxxxxxxxxxxxxd => 3x3x1xxxx1xxxxxxxxxxxxxxd :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"rackAware":true,"primaryDiskless":true}
+SIZE-IMPL ursa-3az 3x3x1xxxxxxxxxxxxxxx2xxxd => 3x3x1xxxxxxxxxxxxxxx2xxxd :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"schemaRegistry":true,"srInstancesPerDc":1,"primaryDiskless":true}
+SIZE-IMPL ursa-3az 2x3x1xxxxxxxxxxxxxxxxxxd => 2x3x1xxxxxxxxxxxxxxxxxxd :: {"brokersPerZone":[2],"partitions":3,"replicationFactor":1,"primaryDiskless":true}
+SIZE-IMPL ursa-3az 1x3x1xxxxxxxxxxxxxxxxxxd => 1x3x1xxxxxxxxxxxxxxxxxxd :: {"brokersPerZone":[1],"partitions":3,"replicationFactor":1,"primaryDiskless":true}
+SIZE-IMPL ursa-3az 3x3x3xxxxxxxxxxx3~c~~~ => 3x3x3xxxxxxxxxxx3~c~~~ :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":3,"primaryMinIsr":3,"primaryCleanup":"compact"}
+SIZE-IMPL ursa-3az 5x4x1xaudit~2~2~1~d~~~~xxxxxxxxxxxxxxxxxd => 5x4x1xaudit~2~2~1~d~~~~xxxxxxxxxxxxxxxxxd :: {"brokersPerZone":[5],"partitions":4,"replicationFactor":1,"extraTopics":[{"name":"audit","partitions":2,"replicationFactor":2,"minInSyncReplicas":1,"cleanupPolicy":"delete"}],"primaryDiskless":true}
+SIZE-IMPL ursa-3az 3x3x3xxxxxxxxxxxxxxxxxxd => 3x3x1xxxxxxxxxxxxxxxxxxd :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"primaryDiskless":true}
+SIZE-IMPL ursa-3az 7x3x1xxxxxxxxxxxxxxxxxxd => 6x3x1xxxxxxxxxxxxxxxxxxd :: {"brokersPerZone":[6],"partitions":3,"replicationFactor":1,"primaryDiskless":true}
+SIZE-IMPL ursa-3az 3x3x1xev~3~3~2~d~~~~~1xxxxxxxxxxxxxxxxxd => 3x3x1xev~3~1~1~d~~~~~1xxxxxxxxxxxxxxxxxd :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"extraTopics":[{"name":"ev","partitions":3,"replicationFactor":1,"minInSyncReplicas":1,"cleanupPolicy":"delete","disklessEnable":true}],"primaryDiskless":true}
+SIZE-IMPL ursa-3az 3x3x1xev~3~1~1~c~~~~~1xxxxxxxxxxxxxxxxxd => 3x3x1xev~3~1~1~c~~~~xxxxxxxxxxxxxxxxxd :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"extraTopics":[{"name":"ev","partitions":3,"replicationFactor":1,"minInSyncReplicas":1,"cleanupPolicy":"compact"}],"primaryDiskless":true}
+SIZE-IMPL ursa-3az 3x3x1xpayments~1~1~1~d~~~~xxxxxxxxxxxxxxxxxd => 3x3x1xpayments-2~1~1~1~d~~~~xxxxxxxxxxxxxxxxxd :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"extraTopics":[{"name":"payments-2","partitions":1,"replicationFactor":1,"minInSyncReplicas":1,"cleanupPolicy":"delete"}],"primaryDiskless":true}
+SIZE-IMPL ursa-3az 3x3x1xxxxxxxxxxxxxxxxxx.900 => 3x3x1 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1}
 # 2026-11-19 (v3.0 Streamhouse, release stage next): SIZE-SINK <raw> => <slug> :: <json size>
 #   = decodeFreePlaySize('streamhouse', <raw>), then "(default)" when isDefaultFreePlaySize
 #   holds (the playground omits size) or else encodeFreePlaySize, via a throwaway tsx script
