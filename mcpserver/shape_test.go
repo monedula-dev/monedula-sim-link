@@ -698,8 +698,8 @@ func TestShapeImplMatchesTypeScriptFixtures(t *testing.T) {
 		}
 		checked++
 	}
-	if checked != 37 {
-		t.Fatalf("replayed %d SIZE-IMPL fixtures, want 37", checked)
+	if checked != 68 {
+		t.Fatalf("replayed %d SIZE-IMPL fixtures, want 68", checked)
 	}
 }
 

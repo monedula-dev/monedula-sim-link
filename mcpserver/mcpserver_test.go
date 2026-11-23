@@ -400,9 +400,15 @@ func TestOpenScenario(t *testing.T) {
 
 	// The KafScale 2.0 scenarios of simulator v2.2: the write path 08.1.1 and
 	// 08.2.1-08.2.7 (the playground opens a retired 08.1.2-08.1.5 link as its
-	// 2.0 counterpart), and the Ursa for Kafka scenarios 13.1.1-13.1.5 (release
-	// stage next).
-	for _, id := range []string{"08.1.1", "08.2.1", "08.2.2", "08.2.3", "08.2.4", "08.2.5", "08.2.6", "08.2.7", "13.1.1", "13.1.2", "13.1.3", "13.1.4", "13.1.5"} {
+	// 2.0 counterpart), and at release stage next the WarpStream scenarios
+	// 10.1.1-10.1.7, the Redpanda Cloud Topics scenarios 11.1.1-11.1.5 and the
+	// Ursa for Kafka scenarios 13.1.1-13.1.5.
+	for _, id := range []string{
+		"08.1.1", "08.2.1", "08.2.2", "08.2.3", "08.2.4", "08.2.5", "08.2.6", "08.2.7",
+		"10.1.1", "10.1.2", "10.1.3", "10.1.4", "10.1.5", "10.1.6", "10.1.7",
+		"11.1.1", "11.1.2", "11.1.3", "11.1.4", "11.1.5",
+		"13.1.1", "13.1.2", "13.1.3", "13.1.4", "13.1.5",
+	} {
 		res := callTool(t, s, "open_scenario", map[string]any{"scenarioId": id})
 		var out OpenScenarioOutput
 		structured(t, res, &out)
@@ -609,7 +615,8 @@ func TestValidateActionsSchemaRegistry(t *testing.T) {
 
 // TestBuildURLDisklessControlPlanes builds the v2.2 control-plane sessions end
 // to end: PostgreSQL stopped and started on inkless-3az, etcd on kafscale-3b,
-// with the playground's own DB/ET codes in the URL and the kinds echoed back.
+// and (v2.3, next) WarpStream's control plane on warpstream-3az, with the
+// playground's own DB/ET/CP codes in the URL and the kinds echoed back.
 func TestBuildURLDisklessControlPlanes(t *testing.T) {
 	s := newSession(t)
 	for _, c := range []struct {
@@ -620,6 +627,7 @@ func TestBuildURLDisklessControlPlanes(t *testing.T) {
 	}{
 		{"inkless-3az", "stop_coordinator_db", "start_coordinator_db", "DB:0@2400,DB:1@6000"},
 		{"kafscale-3b", "stop_etcd", "start_etcd", "ET:0@2400,ET:1@6000"},
+		{"warpstream-3az", "stop_control_plane", "start_control_plane", "CP:0@2400,CP:1@6000"},
 	} {
 		res := callTool(t, s, "build_playground_url", map[string]any{
 			"cluster": c.cluster,

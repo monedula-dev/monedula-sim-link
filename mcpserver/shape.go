@@ -30,7 +30,7 @@ type ClusterShape struct {
 	// freePlayTopologies.ts. Requires at least one topic with DisklessEnable
 	// (validateDisklessTiming); rejected otherwise, mirroring the TS store's
 	// "kept only when some topic is diskless" rule.
-	DisklessTiming *DisklessTimingShape `json:"disklessTiming,omitempty" jsonschema:"optional diskless timing override (v2.0+); requires a diskless topic (disklessEnable, or a diskless preset: diskless-3az, inkless-3az, kafscale-3b, automq-3az, or ursa-3az while a topic there is diskless). kafscale-3b takes uploadMs only (KafScale has no commit interval); on automq-3az commitIntervalMs is the WAL batch interval, on ursa-3az the write buffer close"`
+	DisklessTiming *DisklessTimingShape `json:"disklessTiming,omitempty" jsonschema:"optional diskless timing override (v2.0+); requires a diskless topic (disklessEnable, or a diskless preset: diskless-3az, inkless-3az, kafscale-3b, automq-3az, warpstream-3az, redpanda-3az, or ursa-3az while a topic there is diskless). kafscale-3b takes uploadMs only (KafScale has no commit interval); on automq-3az commitIntervalMs is the WAL batch interval, on warpstream-3az the Agent's batchTimeout, on redpanda-3az the L0 upload interval, on ursa-3az the write buffer close"`
 	// SchemaRegistry turns the session's schema registry on (size tail index
 	// 14). Mirrors FreePlaySize.schemaRegistry / srInstancesPerDc /
 	// srFollowerOnlyDcs in freePlayTopologies.ts.
@@ -86,15 +86,17 @@ type TopicShape struct {
 	// freePlayTopologies.ts. A pointer because ursa-3az's primary is diskless
 	// unless the shape says false: unset there is the preset's choice, not off.
 	// Everywhere else unset and false are the same.
-	DisklessEnable *bool `json:"disklessEnable,omitempty" jsonschema:"optional KIP-1163 draft diskless.enable (v2.0+); not compatible with a compacted cleanupPolicy or a mirror topology. On kafscale-3b and automq-3az every topic is diskless already; on inkless-3az the primary 'orders' stays classic. On ursa-3az it is ursa.storage.enable, chosen per topic: 'orders' is diskless unless this is false, any other topic is a disk topic unless this is true, and a diskless topic has replication factor 1"`
+	DisklessEnable *bool `json:"disklessEnable,omitempty" jsonschema:"optional KIP-1163 draft diskless.enable (v2.0+); not compatible with a compacted cleanupPolicy or a mirror topology. On kafscale-3b and automq-3az every topic is diskless already; on inkless-3az the primary 'orders' stays classic. On ursa-3az it is ursa.storage.enable, chosen per topic: 'orders' is diskless unless this is false, any other topic is a disk topic unless this is true, and a diskless topic has replication factor 1. On warpstream-3az every topic is in object storage already; on redpanda-3az every topic is a cloud topic by the cluster, so disklessEnable true is refused there"`
 }
 
 // disklessSet reports whether a topic asks for diskless.enable=true.
 func disklessSet(t TopicShape) bool { return t.DisklessEnable != nil && *t.DisklessEnable }
 
 // topicDiskless is a topic's effective diskless choice on topo: every topic on
-// KafScale and AutoMQ, the primary on ursa-3az unless the shape turns it off,
-// and otherwise whatever the topic asks for.
+// KafScale, AutoMQ and WarpStream, the primary on ursa-3az unless the shape
+// turns it off, and otherwise whatever the topic asks for. (On redpanda-3az
+// every topic is a cloud topic by the cluster, with no topic flag: see
+// clusterDiskless.)
 func topicDiskless(topo topology, t TopicShape, isPrimary bool) bool {
 	if allDiskless(topo) {
 		return true
@@ -113,8 +115,12 @@ type topology struct {
 	defaultPartitions int
 	defaultRF         int
 	brokerCap         int // total across zones (§12: 10 single-dc, 9 otherwise)
-	partitionCap      int // 0 = derived (stretched-3)
-	mrc               bool
+	// brokerMin is the smallest total the playground keeps (0 = one per zone):
+	// warpstream-3az runs one to two Agents in each of its three zones, so it
+	// raises fewer than 3 to 3.
+	brokerMin    int
+	partitionCap int // 0 = derived (stretched-3)
+	mrc          bool
 	// templateDiskless is true when the preset always materializes a fixed
 	// diskless topic of its own (diskless-3az's `clicks`), independent of
 	// anything the caller's shape.topics declare. Mirrors templateTopics(...)
@@ -127,8 +133,14 @@ type topology struct {
 	fixedTopics []string
 	// impl is the diskless implementation the preset runs (v2.2,
 	// TEMPLATES[type].disklessImpl): "" for the KIP-1163 draft and the classic
-	// topologies, else "inkless", "kafscale", "automq" or "ursa".
+	// topologies, else "inkless", "kafscale", "automq", "warpstream",
+	// "redpanda" or "ursa".
 	impl string
+	// agentZones are the fixed zones a WarpStream preset cycles its Agents over
+	// (WARPSTREAM_ZONES, freePlayAgentZones). Past one Agent per zone the
+	// playground always stores the per-Agent zone list in tail index 4
+	// (clampRackFields), so the slug carries the cycle az-a, az-b, az-c, az-a, ...
+	agentZones []string
 	// primaryDisklessDefault is true when the preset's primary `orders` is
 	// diskless through the size's primary diskless flag (DEFAULT_FREE_PLAY_SIZE
 	// [type].primaryDiskless): ursa-3az. Its slugs then carry the flag `d` at
@@ -145,16 +157,28 @@ type topology struct {
 }
 
 // topologyOrder lists the topologies in the playground's own order, for errors.
-var topologyOrder = []string{"single-dc", "active-passive", "active-active", "stretched-2-5", "stretched-3", "diskless-3az", "inkless-3az", "kafscale-3b", "automq-3az", "ursa-3az", "streamhouse"}
+var topologyOrder = []string{"single-dc", "active-passive", "active-active", "stretched-2-5", "stretched-3", "diskless-3az", "inkless-3az", "kafscale-3b", "automq-3az", "warpstream-3az", "redpanda-3az", "ursa-3az", "streamhouse"}
 
 // ursaRF1Reason is URSA_RF1_REASON in the website's disklessImpl.ts: Ursa's
 // own rule for diskless topics.
 const ursaRF1Reason = "Ursa forces replication factor 1 on diskless topics; object storage holds the data"
 
 // allDiskless mirrors primaryDisklessByConstruction in freePlayTopologies.ts:
-// KafScale and AutoMQ have no classic topics, so every topic is diskless and
-// RF 1 (rfMaxFor), whatever the shape says.
-func allDiskless(t topology) bool { return t.impl == "kafscale" || t.impl == "automq" }
+// KafScale, AutoMQ and WarpStream have no classic topics, so every topic is
+// diskless and RF 1 (rfMaxFor), whatever the shape says.
+func allDiskless(t topology) bool {
+	return t.impl == "kafscale" || t.impl == "automq" || t.impl == "warpstream"
+}
+
+// clusterDiskless mirrors disklessByClusterConfig in freePlayTopologies.ts:
+// on Redpanda the cluster's implementation makes every topic a cloud topic
+// (redpanda.storage.mode=cloud) with no diskless.enable on any topic, so the
+// diskless timing applies with no diskless topic and a topic flag is refused.
+func clusterDiskless(t topology) bool { return t.impl == "redpanda" }
+
+// warpstreamNoReplicasReason is WARPSTREAM_NO_REPLICAS_REASON in the website's
+// disklessImpl.ts.
+const warpstreamNoReplicasReason = "WarpStream partitions have no replicas; object storage replicates the data and any Agent serves any partition."
 
 // hasCommitInterval mirrors disklessHasCommitInterval: KafScale flushes per
 // produce request, so the playground drops a commit interval there.
@@ -201,7 +225,19 @@ var topologies = map[string]topology{
 	// (the size's primary diskless flag); the fixed `payments` is a disk topic
 	// (3 partitions, RF 3, min.insync.replicas 2). At most 6 brokers
 	// (MAX_URSA_FREE_PLAY_BROKERS), the shared 6-partition cap.
-	"ursa-3az": {slug: "ursa-3az", zones: []string{"single"}, defaultBrokers: []int{3}, defaultPartitions: 3, defaultRF: 1, brokerCap: 6, partitionCap: 6, fixedTopics: []string{"payments"}, impl: "ursa", primaryDisklessDefault: true},
+	// warpstream-3az (v2.3, release stage next): three WarpStream Agents, one
+	// per zone az-a/b/c, the control plane hosted outside the account (actions
+	// CP:0/CP:1), no KRaft controllers. Every topic is in object storage at RF
+	// 1. One to two Agents per zone: 3 to 6 Agents
+	// (MAX_WARPSTREAM_FREE_PLAY_AGENTS), the shared 6-partition cap.
+	"warpstream-3az": {slug: "warpstream-3az", zones: []string{"single"}, defaultBrokers: []int{3}, defaultPartitions: 3, defaultRF: 1, brokerCap: 6, brokerMin: 3, partitionCap: 6, impl: "warpstream", agentZones: []string{"az-a", "az-b", "az-c"}},
+	// redpanda-3az (v2.3, release stage next): three Redpanda v26.2.2 brokers
+	// cycling racks az-a/b/c (rack-aware), no KRaft (the controller Raft group
+	// is not drawn). Every topic is a cloud topic by the cluster, at its own
+	// replication factor: orders has 6 partitions at RF 3. The shared multi-DC
+	// caps (9 brokers, 6 partitions).
+	"redpanda-3az": {slug: "redpanda-3az", zones: []string{"single"}, defaultBrokers: []int{3}, defaultPartitions: 6, defaultRF: 3, brokerCap: 9, partitionCap: 6, impl: "redpanda"},
+	"ursa-3az":     {slug: "ursa-3az", zones: []string{"single"}, defaultBrokers: []int{3}, defaultPartitions: 3, defaultRF: 1, brokerCap: 6, partitionCap: 6, fixedTopics: []string{"payments"}, impl: "ursa", primaryDisklessDefault: true},
 	// v3.0 Streamhouse (release stage next): a classic single cluster with a
 	// Schema Registry, Kafka Connect and Apache Iceberg's sink connector
 	// orders-sink writing `orders` to the Iceberg table `orders`. It has the
@@ -418,7 +454,7 @@ func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam
 	base := strings.Join(zoneParts, "-") + "x" + strconv.Itoa(partitions) + "x" + strconv.Itoa(rf)
 
 	// --- diskless timing (KIP-1163 draft, v2.0+) -------------
-	anyDiskless := primaryDiskless || topo.templateDiskless || allDiskless(topo)
+	anyDiskless := primaryDiskless || topo.templateDiskless || allDiskless(topo) || clusterDiskless(topo)
 	for _, t := range extras {
 		if disklessSet(t) {
 			anyDiskless = true
@@ -463,6 +499,9 @@ func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam
 	}
 	if shape.RackAware {
 		tail[3] = "1"
+	}
+	if zones := agentZoneList(topo, brokers); zones != "" {
+		tail[4] = zones
 	}
 	if primary != nil {
 		if chunk := primaryConfigChunk(*primary); chunk != "" {
@@ -565,7 +604,32 @@ func resolveBrokers(topo topology, shape *ClusterShape) ([]int, error) {
 	if total > topo.brokerCap {
 		return nil, fmt.Errorf("shape: %d total brokers exceeds the %s cap of %d", total, topo.slug, topo.brokerCap)
 	}
+	if total < topo.brokerMin {
+		return nil, fmt.Errorf("shape: %d total brokers is below the %s minimum of %d (one to two Agents in each of the zones %s)", total, topo.slug, topo.brokerMin, strings.Join(topo.agentZones, ", "))
+	}
 	return brokers, nil
+}
+
+// agentZoneList is size tail index 4 on a WarpStream preset: the per-Agent
+// zone list clampAgentZones builds with no custom zones (the cycle over
+// agentZones), which the playground stores once there is more than one Agent
+// per zone. "" otherwise.
+func agentZoneList(topo topology, brokers []int) string {
+	if len(topo.agentZones) == 0 {
+		return ""
+	}
+	total := 0
+	for _, b := range brokers {
+		total += b
+	}
+	if total <= len(topo.agentZones) {
+		return ""
+	}
+	zones := make([]string, total)
+	for i := range zones {
+		zones[i] = topo.agentZones[i%len(topo.agentZones)]
+	}
+	return strings.Join(zones, "!")
 }
 
 func validateTopic(topo topology, brokers []int, partitions, rf int, diskless bool) error {
@@ -574,6 +638,9 @@ func validateTopic(topo topology, brokers []int, partitions, rf int, diskless bo
 	}
 	if rf < 1 {
 		return fmt.Errorf("replicationFactor %d must be >= 1", rf)
+	}
+	if topo.impl == "warpstream" && rf > 1 {
+		return fmt.Errorf("replicationFactor %d: every topic on %s has replication factor 1. %s", rf, topo.slug, warpstreamNoReplicasReason)
 	}
 	if allDiskless(topo) && rf > 1 {
 		return fmt.Errorf("replicationFactor %d: every topic on %s has replication factor 1, since S3 holds the data", rf, topo.slug)
@@ -618,6 +685,23 @@ func validateTopicConfig(topo topology, t TopicShape, isPrimary bool) error {
 	// v2.2: every topic on KafScale and AutoMQ is diskless, and the simulator
 	// models neither one's compaction (KafScale has none; AutoMQ has it, the
 	// simulator does not model it yet), so a compacted topic is refused there.
+	// WarpStream: the engine creates a compacted topic with cleanup.policy=delete
+	// (warpstreamConfigIssues), so the shape refuses it, with the engine's copy.
+	if topo.impl == "warpstream" && strings.Contains(t.CleanupPolicy, "compact") {
+		return fmt.Errorf("cleanupPolicy %q: WarpStream supports compacted topics, but the simulator does not model file compaction yet (the playground would create the topic with cleanup.policy=delete)", t.CleanupPolicy)
+	}
+	// Redpanda: every topic is a cloud topic by the cluster. The playground
+	// drops a topic's diskless flag (disklessAllowed), and the engine creates a
+	// compacted topic with cleanup.policy=delete (redpandaConfigIssues).
+	if clusterDiskless(topo) {
+		if disklessSet(t) {
+			return fmt.Errorf("disklessEnable: in a Redpanda cluster every topic is a cloud topic (redpanda.storage.mode=cloud), so a topic on %s takes no diskless.enable; leave it unset", topo.slug)
+		}
+		if strings.Contains(t.CleanupPolicy, "compact") {
+			return fmt.Errorf("cleanupPolicy %q: Redpanda compacts cloud topics in L1, but the simulator does not model it yet (the playground would create the topic with cleanup.policy=delete)", t.CleanupPolicy)
+		}
+		return nil
+	}
 	if allDiskless(topo) {
 		if strings.Contains(t.CleanupPolicy, "compact") {
 			return fmt.Errorf("cleanupPolicy %q: the simulator does not model compacted topics on %s, where every topic is diskless", t.CleanupPolicy, topo.slug)
@@ -662,7 +746,7 @@ func validateDisklessTiming(topo topology, dt *DisklessTimingShape, anyDiskless 
 		return nil
 	}
 	if !anyDiskless {
-		return fmt.Errorf("requires a diskless topic (disklessEnable, or a diskless preset: diskless-3az, inkless-3az, kafscale-3b, automq-3az, or ursa-3az with a diskless topic) (KIP-1163 draft, v2.0+)")
+		return fmt.Errorf("requires a diskless topic (disklessEnable, or a diskless preset: diskless-3az, inkless-3az, kafscale-3b, automq-3az, warpstream-3az, redpanda-3az, or ursa-3az with a diskless topic) (KIP-1163 draft, v2.0+)")
 	}
 	if dt.CommitIntervalMs != nil && !hasCommitInterval(topo) {
 		return fmt.Errorf("commitIntervalMs: %s has no commit interval (KafScale flushes the segment per produce request); set uploadMs only", topo.slug)

@@ -79,6 +79,7 @@ func TestRoundTripEachKind(t *testing.T) {
 		"set_sr_eligibility 0": {{At: 100, Action: SetSREligibility{InstanceID: "sr-dc-b-1"}}},
 		"coordinator db":       {{At: 100, Action: StopCoordinatorDB{}}, {At: 200, Action: StartCoordinatorDB{}}},
 		"etcd":                 {{At: 100, Action: StopEtcd{}}, {At: 200, Action: StartEtcd{}}},
+		"control plane":        {{At: 100, Action: StopControlPlane{}}, {At: 200, Action: StartControlPlane{}}},
 		"object storage":       {{At: 100, Action: StopObjectStorage{}}, {At: 200, Action: SlowObjectStorage{}}, {At: 300, Action: StartObjectStorage{}}},
 		"pause broker":         {{At: 100, Action: PauseBroker{BrokerID: "broker-2"}}, {At: 200, Action: ResumeBroker{BrokerID: "broker-2"}}},
 		"connect":              {{At: 100, Action: KillConnectWorker{WorkerID: "connect-1"}}, {At: 200, Action: RestartConnectWorker{WorkerID: "connect-1"}}, {At: 300, Action: RestartConnector{Name: "orders-sink"}}},
@@ -263,6 +264,8 @@ func TestDecodeRejectsMalformed(t *testing.T) {
 		"DB:2@100",            // coordinator db state is 0 or 1
 		"DB:@100",             // empty coordinator db state
 		"ET:start@100",        // etcd state is 0 or 1
+		"CP:2@100",            // control plane state is 0 or 1
+		"CP:@100",             // empty control plane state
 		"OS:2@100",            // object storage state is 0, s or 1
 		"OS:S@100",            // slow is lower-case s only
 		"OS:@100",             // empty object storage state
@@ -320,7 +323,7 @@ func randomAction(rng *rand.Rand) Action {
 			RestartProducer{ProducerID: id("p"), NewSchema: rng.Intn(2) == 0},
 			SetSREligibility{InstanceID: id("sr"), Eligible: rng.Intn(2) == 0})
 	case 12:
-		return pickAction(rng, StopCoordinatorDB{}, StartCoordinatorDB{}, StopEtcd{}, StartEtcd{},
+		return pickAction(rng, StopCoordinatorDB{}, StartCoordinatorDB{}, StopEtcd{}, StartEtcd{}, StopControlPlane{}, StartControlPlane{},
 			StopObjectStorage{}, SlowObjectStorage{}, StartObjectStorage{},
 			PauseBroker{BrokerID: id("b")}, ResumeBroker{BrokerID: id("b")},
 			KillConnectWorker{WorkerID: id("connect-")}, RestartConnectWorker{WorkerID: id("connect-")},
@@ -452,6 +455,8 @@ func TestDisklessControlPlaneWire(t *testing.T) {
 		{Entry{At: 6000, Action: StartCoordinatorDB{}}, "DB:1@6000"},
 		{Entry{At: 1000, Action: StopEtcd{}}, "ET:0@1000"},
 		{Entry{At: 5000, Action: StartEtcd{}}, "ET:1@5000"},
+		{Entry{At: 2000, Action: StopControlPlane{}}, "CP:0@2000"},
+		{Entry{At: 6000, Action: StartControlPlane{}}, "CP:1@6000"},
 		{Entry{At: 2000, Action: StopObjectStorage{}}, "OS:0@2000"},
 		{Entry{At: 3000, Action: SlowObjectStorage{}}, "OS:s@3000"},
 		{Entry{At: 8000, Action: StartObjectStorage{}}, "OS:1@8000"},

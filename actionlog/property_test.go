@@ -250,6 +250,8 @@ func (m *mulberry32) genAction() Action {
 		func() Action { return StartCoordinatorDB{} },
 		func() Action { return StopEtcd{} },
 		func() Action { return StartEtcd{} },
+		func() Action { return StopControlPlane{} },
+		func() Action { return StartControlPlane{} },
 		func() Action { return StopObjectStorage{} },
 		func() Action { return SlowObjectStorage{} },
 		func() Action { return StartObjectStorage{} },

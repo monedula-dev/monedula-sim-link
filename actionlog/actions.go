@@ -731,10 +731,11 @@ func (a SetSREligibility) payload() (string, error) {
 
 // --- Diskless implementation control planes (v2.2) -------------------------
 //
-// The playground writes these as "DB:0"/"DB:1" and "ET:0"/"ET:1": the payload
-// is the target state, 0 = stopped, 1 = running. They act on the control plane
-// of a diskless implementation preset (cluster inkless-3az, kafscale-3b or
-// kafscale-3b) and are a no-op on any other cluster.
+// The playground writes these as "DB:0"/"DB:1", "ET:0"/"ET:1" and, from v2.3,
+// "CP:0"/"CP:1": the payload is the target state, 0 = stopped, 1 = running.
+// They act on the control plane of a diskless implementation preset (cluster
+// inkless-3az, kafscale-3b or warpstream-3az) and are a no-op on any other
+// cluster.
 
 // StopCoordinatorDB stops the Inkless batch coordinator's PostgreSQL (DB:0).
 type StopCoordinatorDB struct{}
@@ -765,6 +766,21 @@ type StartEtcd struct{}
 func (StartEtcd) isAction()                {}
 func (StartEtcd) kind() string             { return "ET" }
 func (StartEtcd) payload() (string, error) { return "1", nil }
+
+// StopControlPlane makes WarpStream's hosted control plane unreachable (CP:0;
+// v2.3, release stage next). A no-op on any cluster other than warpstream-3az.
+type StopControlPlane struct{}
+
+func (StopControlPlane) isAction()                {}
+func (StopControlPlane) kind() string             { return "CP" }
+func (StopControlPlane) payload() (string, error) { return "0", nil }
+
+// StartControlPlane makes WarpStream's control plane reachable again (CP:1).
+type StartControlPlane struct{}
+
+func (StartControlPlane) isAction()                {}
+func (StartControlPlane) kind() string             { return "CP" }
+func (StartControlPlane) payload() (string, error) { return "1", nil }
 
 // --- Diskless object storage (v2.2) -----------------------------------------
 //

@@ -71,6 +71,14 @@ func decodeAction(kind, payload string) (Action, error) {
 			return StartEtcd{}, nil
 		}
 		return nil, fmt.Errorf("etcd: expected 0 (stop) or 1 (start), got %q", payload)
+	case "CP":
+		switch payload {
+		case "0":
+			return StopControlPlane{}, nil
+		case "1":
+			return StartControlPlane{}, nil
+		}
+		return nil, fmt.Errorf("control plane: expected 0 (stop) or 1 (start), got %q", payload)
 	case "OS":
 		switch payload {
 		case "0":
