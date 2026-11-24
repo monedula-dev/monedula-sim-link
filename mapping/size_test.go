@@ -213,6 +213,29 @@ func TestBuildSize(t *testing.T) {
 	}
 }
 
+// TestEncodeNisshiTail pins the Nisshi part of tail index 17 to the order
+// encodeDiskless writes it in: `s`, the timing (upload only), `m<ms>`. Each
+// non-empty value is the tail of a SIZE-IMPL nisshi-3b fixture.
+func TestEncodeNisshiTail(t *testing.T) {
+	ip := func(v int) *int { return &v }
+	for _, c := range []struct {
+		s3                  bool
+		upload, maintenance *int
+		want                string
+	}{
+		{false, nil, nil, ""},
+		{true, nil, nil, "s"},
+		{true, ip(900), nil, "s.900"},
+		{false, ip(900), nil, ".900"},
+		{false, nil, ip(30000), "m30000"},
+		{false, ip(900), ip(30000), ".900m30000"},
+	} {
+		if got := EncodeNisshiTail(c.s3, c.upload, c.maintenance); got != c.want {
+			t.Errorf("EncodeNisshiTail(%v, %v, %v) = %q, want %q", c.s3, c.upload, c.maintenance, got, c.want)
+		}
+	}
+}
+
 func TestSimTopicName(t *testing.T) {
 	cases := map[string]string{
 		"orders":      "orders",

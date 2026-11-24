@@ -617,9 +617,10 @@ func TestShapeSchemaRegistryCombinesWithOtherSegments(t *testing.T) {
 }
 
 // TestShapeImplMatchesTypeScriptFixtures replays the SIZE-IMPL lines of
-// mapping/testdata/ts-fixtures.txt (v2.2, and v2.3 for ursa-3az), dumped from
-// the real TypeScript codec for the inkless-3az, kafscale-3b, automq-3az and
-// ursa-3az presets: the shape the
+// mapping/testdata/ts-fixtures.txt (v2.2, and v2.3 for ursa-3az,
+// warpstream-3az, redpanda-3az and nisshi-3b), dumped from the real TypeScript
+// codec for the inkless-3az, kafscale-3b, automq-3az and v2.3 presets: the
+// shape the
 // playground decodes from a slug must come back out of shapeToParams as the
 // slug the playground itself re-encodes (or no size at all for the preset
 // default).
@@ -658,6 +659,8 @@ func TestShapeImplMatchesTypeScriptFixtures(t *testing.T) {
 			PrimaryMinIsr    *int                 `json:"primaryMinIsr"`
 			PrimaryCleanup   string               `json:"primaryCleanup"`
 			RackAware        bool                 `json:"rackAware"`
+			NisshiEngine     string               `json:"nisshiEngine"`
+			NisshiMaintMs    *int                 `json:"nisshiMaintenanceMs"`
 		}
 		if err := json.Unmarshal([]byte(js), &sz); err != nil {
 			t.Fatalf("%s %s: size json: %v", typ, want, err)
@@ -680,6 +683,9 @@ func TestShapeImplMatchesTypeScriptFixtures(t *testing.T) {
 		if sz.SchemaRegistry {
 			shape.SchemaRegistry = &SchemaRegistryShape{InstancesPerDc: sz.SrInstancesPerDc}
 		}
+		if sz.NisshiEngine != "" || sz.NisshiMaintMs != nil {
+			shape.Nisshi = &NisshiShape{Engine: sz.NisshiEngine, MaintenanceMs: sz.NisshiMaintMs}
+		}
 		cluster, size, _, err := shapeToParams(typ, shape)
 		if err != nil {
 			t.Errorf("%s %s: shapeToParams: %v", typ, want, err)
@@ -698,8 +704,8 @@ func TestShapeImplMatchesTypeScriptFixtures(t *testing.T) {
 		}
 		checked++
 	}
-	if checked != 68 {
-		t.Fatalf("replayed %d SIZE-IMPL fixtures, want 68", checked)
+	if checked != 97 {
+		t.Fatalf("replayed %d SIZE-IMPL fixtures, want 97", checked)
 	}
 }
 

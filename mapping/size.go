@@ -76,18 +76,28 @@ type disklessTail struct {
 	// ⇒ the simulator's own defaults. Either may be set without the other.
 	commitMs *int
 	uploadMs *int
+	// nisshiS3 is Nisshi's S3 storage engine (FreePlaySize.nisshiEngine 's3',
+	// an `s` after the flags); unset is PostgreSQL. v2.3, release stage next.
+	nisshiS3 bool
+	// maintenanceMs is Nisshi's PostgreSQL maintenance sweep interval
+	// (FreePlaySize.nisshiMaintenanceMs, `m<ms>` after the timing); nil is the
+	// preset's.
+	maintenanceMs *int
 }
 
 // empty reports whether this diskless tail carries nothing to encode (no
 // primary flag, no timing override) - buildSize then omits tail index 17
 // entirely, keeping every pre-diskless slug byte-identical.
 func (d disklessTail) empty() bool {
-	return !d.primary && d.commitMs == nil && d.uploadMs == nil
+	return !d.primary && d.commitMs == nil && d.uploadMs == nil && !d.nisshiS3 && d.maintenanceMs == nil
 }
 
 // encode renders this diskless tail exactly like encodeDiskless in
-// freePlayTopologies.ts: `d` when the primary is diskless, then - only when a
-// timing is set - `<commitMs>.<uploadMs>` (either side empty when unset).
+// freePlayTopologies.ts: `d` when the primary is diskless, `s` for Nisshi's S3
+// engine, then - only when a timing is set - `<commitMs>.<uploadMs>` (either
+// side empty when unset), then `m<ms>` for a Nisshi maintenance interval. (The
+// AutoMQ, WarpStream and Redpanda flags `r`, `c` and `a`, which come between
+// `d` and `s`, have no input here.)
 func (d disklessTail) encode() string {
 	if d.empty() {
 		return ""
@@ -95,6 +105,9 @@ func (d disklessTail) encode() string {
 	var b strings.Builder
 	if d.primary {
 		b.WriteString("d")
+	}
+	if d.nisshiS3 {
+		b.WriteString("s")
 	}
 	if d.commitMs != nil || d.uploadMs != nil {
 		if d.commitMs != nil {
@@ -104,6 +117,10 @@ func (d disklessTail) encode() string {
 		if d.uploadMs != nil {
 			b.WriteString(strconv.Itoa(*d.uploadMs))
 		}
+	}
+	if d.maintenanceMs != nil {
+		b.WriteString("m")
+		b.WriteString(strconv.Itoa(*d.maintenanceMs))
 	}
 	return b.String()
 }
@@ -117,6 +134,17 @@ func (d disklessTail) encode() string {
 // instead of re-deriving it, keeping the two byte-identical by construction.
 func EncodeDisklessTail(primary bool, commitMs, uploadMs *int) string {
 	return disklessTail{primary: primary, commitMs: commitMs, uploadMs: uploadMs}.encode()
+}
+
+// EncodeNisshiTail is EncodeDisklessTail for the Nisshi preset (nisshi-3b,
+// v2.3, release stage next): `s` for the S3 engine, the upload latency
+// (Nisshi has no commit interval, so the timing is `.<uploadMs>`), and
+// `m<maintenanceMs>` for the PostgreSQL maintenance interval, in the order
+// encodeDiskless writes them. "" when none is set (PostgreSQL with the
+// preset's timing). The caller validates the combination: the playground
+// keeps a maintenance interval on PostgreSQL only.
+func EncodeNisshiTail(s3 bool, uploadMs, maintenanceMs *int) string {
+	return disklessTail{nisshiS3: s3, uploadMs: uploadMs, maintenanceMs: maintenanceMs}.encode()
 }
 
 // escapeSizeName applies the slug name escape from freePlayTopologies.ts

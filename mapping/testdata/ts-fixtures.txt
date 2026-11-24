@@ -291,6 +291,42 @@ SIZE-IMPL redpanda-3az 3x6x3xxxxxxxxxxxxxxxxxx.900 => 3x6x3xxxxxxxxxxxxxxxxxx.90
 SIZE-IMPL redpanda-3az 3x6x3xxxxxxxxxxxxxxxxxxd => 3x6x3 :: {"brokersPerZone":[3],"partitions":6,"replicationFactor":3}
 SIZE-IMPL redpanda-3az 3x6x3xxxx1x => 3x6x3xxxx1x :: {"brokersPerZone":[3],"partitions":6,"replicationFactor":3,"rackAware":true}
 SIZE-IMPL redpanda-3az 3x6x3xxxxxxxxxxxxxxx2 => 3x6x3xxxxxxxxxxxxxxx2 :: {"brokersPerZone":[3],"partitions":6,"replicationFactor":3,"schemaRegistry":true,"srInstancesPerDc":1}
+# 2026-11-24 (v2.3 Nisshi, formerly Tansu, not released yet): SIZE-IMPL nisshi-3b lines, dumped
+#   the same way from the website's main (bd66d738). Lines whose sides differ show what the
+#   playground rewrites: the broker count is capped at 5 and partitions at 6, RF is clamped
+#   to 1 (with min.ISR, so a primary min.ISR falls back to the default and is dropped), a
+#   primary diskless flag `d` is dropped, an extra topic always gets the diskless `~1` and
+#   keeps a compacted cleanup policy, a commit interval is dropped (Nisshi has none), a
+#   maintenance interval `m<ms>` is clamped to 2000-600000 and dropped on the S3 engine `s`.
+SIZE-IMPL nisshi-3b 3x3x1 => 3x3x1 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1}
+SIZE-IMPL nisshi-3b 3x3x3 => 3x3x1 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1}
+SIZE-IMPL nisshi-3b 1x1x1 => 1x1x1 :: {"brokersPerZone":[1],"partitions":1,"replicationFactor":1}
+SIZE-IMPL nisshi-3b 5x6x1 => 5x6x1 :: {"brokersPerZone":[5],"partitions":6,"replicationFactor":1}
+SIZE-IMPL nisshi-3b 6x3x1 => 5x3x1 :: {"brokersPerZone":[5],"partitions":3,"replicationFactor":1}
+SIZE-IMPL nisshi-3b 3x7x1 => 3x6x1 :: {"brokersPerZone":[3],"partitions":6,"replicationFactor":1}
+SIZE-IMPL nisshi-3b 3x3x1xxxxxxxxxxxxxxxxxxs => 3x3x1xxxxxxxxxxxxxxxxxxs :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"nisshiEngine":"s3"}
+SIZE-IMPL nisshi-3b 3x3x1xxxxxxxxxxxxxxxxxxs250.900 => 3x3x1xxxxxxxxxxxxxxxxxxs.900 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"disklessTiming":{"uploadMs":900},"nisshiEngine":"s3"}
+SIZE-IMPL nisshi-3b 3x3x1xxxxxxxxxxxxxxxxxxs.900 => 3x3x1xxxxxxxxxxxxxxxxxxs.900 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"disklessTiming":{"uploadMs":900},"nisshiEngine":"s3"}
+SIZE-IMPL nisshi-3b 3x3x1xxxxxxxxxxxxxxxxxx.900 => 3x3x1xxxxxxxxxxxxxxxxxx.900 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"disklessTiming":{"uploadMs":900}}
+SIZE-IMPL nisshi-3b 3x3x1xxxxxxxxxxxxxxxxxx250.900 => 3x3x1xxxxxxxxxxxxxxxxxx.900 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"disklessTiming":{"uploadMs":900}}
+SIZE-IMPL nisshi-3b 3x3x1xxxxxxxxxxxxxxxxxxm30000 => 3x3x1xxxxxxxxxxxxxxxxxxm30000 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"nisshiMaintenanceMs":30000}
+SIZE-IMPL nisshi-3b 3x3x1xxxxxxxxxxxxxxxxxxm2000 => 3x3x1xxxxxxxxxxxxxxxxxxm2000 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"nisshiMaintenanceMs":2000}
+SIZE-IMPL nisshi-3b 3x3x1xxxxxxxxxxxxxxxxxxm600000 => 3x3x1xxxxxxxxxxxxxxxxxxm600000 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"nisshiMaintenanceMs":600000}
+SIZE-IMPL nisshi-3b 3x3x1xxxxxxxxxxxxxxxxxxm1000 => 3x3x1xxxxxxxxxxxxxxxxxxm2000 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"nisshiMaintenanceMs":2000}
+SIZE-IMPL nisshi-3b 3x3x1xxxxxxxxxxxxxxxxxxm700000 => 3x3x1xxxxxxxxxxxxxxxxxxm600000 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"nisshiMaintenanceMs":600000}
+SIZE-IMPL nisshi-3b 3x3x1xxxxxxxxxxxxxxxxxxsm30000 => 3x3x1xxxxxxxxxxxxxxxxxxs :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"nisshiEngine":"s3"}
+SIZE-IMPL nisshi-3b 3x3x1xxxxxxxxxxxxxxxxxx.900m30000 => 3x3x1xxxxxxxxxxxxxxxxxx.900m30000 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"disklessTiming":{"uploadMs":900},"nisshiMaintenanceMs":30000}
+SIZE-IMPL nisshi-3b 3x3x1xxxxxxxxxxxxxxxxxxd => 3x3x1 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1}
+SIZE-IMPL nisshi-3b 3x3x1xxxxxxxxxxxxxxxxxxdsm5000 => 3x3x1xxxxxxxxxxxxxxxxxxs :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"nisshiEngine":"s3"}
+SIZE-IMPL nisshi-3b 3x3x1xev~3~1~1~d~~~~ => 3x3x1xev~3~1~1~d~~~~~1 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"extraTopics":[{"name":"ev","partitions":3,"replicationFactor":1,"minInSyncReplicas":1,"cleanupPolicy":"delete","disklessEnable":true}]}
+SIZE-IMPL nisshi-3b 3x3x1xev~3~1~1~d~~~~~1 => 3x3x1xev~3~1~1~d~~~~~1 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"extraTopics":[{"name":"ev","partitions":3,"replicationFactor":1,"minInSyncReplicas":1,"cleanupPolicy":"delete","disklessEnable":true}]}
+SIZE-IMPL nisshi-3b 3x3x1xev~3~3~2~c~~~~~1 => 3x3x1xev~3~1~1~c~~~~~1 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"extraTopics":[{"name":"ev","partitions":3,"replicationFactor":1,"minInSyncReplicas":1,"cleanupPolicy":"compact","disklessEnable":true}]}
+SIZE-IMPL nisshi-3b 3x3x1xev~2~1~1~cd~~~~~1!log~1~1~1~d~~~~ => 3x3x1xev~2~1~1~cd~~~~~1!log~1~1~1~d~~~~~1 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"extraTopics":[{"name":"ev","partitions":2,"replicationFactor":1,"minInSyncReplicas":1,"cleanupPolicy":"compact,delete","disklessEnable":true},{"name":"log","partitions":1,"replicationFactor":1,"minInSyncReplicas":1,"cleanupPolicy":"delete","disklessEnable":true}]}
+SIZE-IMPL nisshi-3b 3x3x1xev~3~1~1~d~~~~~1xxxxxxxxxxxxxxxxxs.900 => 3x3x1xev~3~1~1~d~~~~~1xxxxxxxxxxxxxxxxxs.900 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"extraTopics":[{"name":"ev","partitions":3,"replicationFactor":1,"minInSyncReplicas":1,"cleanupPolicy":"delete","disklessEnable":true}],"disklessTiming":{"uploadMs":900},"nisshiEngine":"s3"}
+SIZE-IMPL nisshi-3b 3x3x1xxxxxxxxxxx~c~~~ => 3x3x1xxxxxxxxxxx~c~~~ :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"primaryCleanup":"compact"}
+SIZE-IMPL nisshi-3b 3x3x3xxxxxxxxxxx3~c~~~ => 3x3x1xxxxxxxxxxx~c~~~ :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"primaryCleanup":"compact"}
+SIZE-IMPL nisshi-3b 3x3x1xxxxxxxxxxxxxxx2 => 3x3x1xxxxxxxxxxxxxxx2 :: {"brokersPerZone":[3],"partitions":3,"replicationFactor":1,"schemaRegistry":true,"srInstancesPerDc":1}
+SIZE-IMPL nisshi-3b 4x2x1xxxxxxxxxxxxxxx1xxxm15000 => 4x2x1xxxxxxxxxxxxxxx1xxxm15000 :: {"brokersPerZone":[4],"partitions":2,"replicationFactor":1,"schemaRegistry":true,"nisshiMaintenanceMs":15000}
 # 2026-11-19 (v3.0 Streamhouse, release stage next): SIZE-SINK <raw> => <slug> :: <json size>
 #   = decodeFreePlaySize('streamhouse', <raw>), then "(default)" when isDefaultFreePlaySize
 #   holds (the playground omits size) or else encodeFreePlaySize, via a throwaway tsx script

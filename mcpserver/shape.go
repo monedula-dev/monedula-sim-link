@@ -30,7 +30,7 @@ type ClusterShape struct {
 	// freePlayTopologies.ts. Requires at least one topic with DisklessEnable
 	// (validateDisklessTiming); rejected otherwise, mirroring the TS store's
 	// "kept only when some topic is diskless" rule.
-	DisklessTiming *DisklessTimingShape `json:"disklessTiming,omitempty" jsonschema:"optional diskless timing override (v2.0+); requires a diskless topic (disklessEnable, or a diskless preset: diskless-3az, inkless-3az, kafscale-3b, automq-3az, warpstream-3az, redpanda-3az, or ursa-3az while a topic there is diskless). kafscale-3b takes uploadMs only (KafScale has no commit interval); on automq-3az commitIntervalMs is the WAL batch interval, on warpstream-3az the Agent's batchTimeout, on redpanda-3az the L0 upload interval, on ursa-3az the write buffer close"`
+	DisklessTiming *DisklessTimingShape `json:"disklessTiming,omitempty" jsonschema:"optional diskless timing override (v2.0+); requires a diskless topic (disklessEnable, or a diskless preset: diskless-3az, inkless-3az, kafscale-3b, automq-3az, warpstream-3az, redpanda-3az, nisshi-3b, or ursa-3az while a topic there is diskless). kafscale-3b and nisshi-3b take uploadMs only (neither has a commit interval; on nisshi-3b uploadMs is the S3 engine's batch PUT); on automq-3az commitIntervalMs is the WAL batch interval, on warpstream-3az the Agent's batchTimeout, on redpanda-3az the L0 upload interval, on ursa-3az the write buffer close"`
 	// SchemaRegistry turns the session's schema registry on (size tail index
 	// 14). Mirrors FreePlaySize.schemaRegistry / srInstancesPerDc /
 	// srFollowerOnlyDcs in freePlayTopologies.ts.
@@ -39,6 +39,17 @@ type ClusterShape struct {
 	// 18; v3.0, release stage next). Mirrors FreePlaySize.streamhouse /
 	// StreamhouseSinkSize in freePlayTopologies.ts.
 	ConnectSink *ConnectSinkShape `json:"connectSink,omitempty" jsonschema:"streamhouse only (v3.0, next): the Kafka Connect Iceberg sink orders-sink. Omitted fields keep the preset's value: 2 workers, tasksMax 2, commit interval 2000 ms, commit timeout 6000 ms, schema evolution on"`
+	// Nisshi is the Nisshi preset's storage engine and maintenance interval
+	// (size tail index 17: `s` and `m<ms>`; v2.3, not released yet). Mirrors
+	// FreePlaySize.nisshiEngine / nisshiMaintenanceMs in freePlayTopologies.ts.
+	Nisshi *NisshiShape `json:"nisshi,omitempty" jsonschema:"nisshi-3b only (v2.3, not released yet): the storage engine and, on PostgreSQL, the maintenance interval. Omitted = PostgreSQL with the preset's 10 s maintenance sweep"`
+}
+
+// NisshiShape is the Nisshi preset's storage engine. Both fields are optional
+// and validated against the playground's clamp instead of being clamped.
+type NisshiShape struct {
+	Engine        string `json:"engine,omitempty" jsonschema:"the storage engine every broker shares: postgres (default; Nisshi's production engine, one transaction per write holding the partition's watermark row lock; stop_coordinator_db / start_coordinator_db stop and start it) or s3 (experimental in Nisshi's docs: a conditional write of the partition's watermark.json, then the batch as its own object; stop_object_storage, slow_object_storage and start_object_storage act on it)"`
+	MaintenanceMs *int   `json:"maintenanceMs,omitempty" jsonschema:"postgres only: the maintenance sweep interval in ms (retention and compaction), 2000-600000. Unset = the preset's 10000 (Nisshi's own default is 600000). Refused with engine s3, which runs no maintenance sweep"`
 }
 
 // ConnectSinkShape is the Streamhouse sink's editable knobs, by the real
@@ -86,14 +97,14 @@ type TopicShape struct {
 	// freePlayTopologies.ts. A pointer because ursa-3az's primary is diskless
 	// unless the shape says false: unset there is the preset's choice, not off.
 	// Everywhere else unset and false are the same.
-	DisklessEnable *bool `json:"disklessEnable,omitempty" jsonschema:"optional KIP-1163 draft diskless.enable (v2.0+); not compatible with a compacted cleanupPolicy or a mirror topology. On kafscale-3b and automq-3az every topic is diskless already; on inkless-3az the primary 'orders' stays classic. On ursa-3az it is ursa.storage.enable, chosen per topic: 'orders' is diskless unless this is false, any other topic is a disk topic unless this is true, and a diskless topic has replication factor 1. On warpstream-3az every topic is in object storage already; on redpanda-3az every topic is a cloud topic by the cluster, so disklessEnable true is refused there"`
+	DisklessEnable *bool `json:"disklessEnable,omitempty" jsonschema:"optional KIP-1163 draft diskless.enable (v2.0+); not compatible with a compacted cleanupPolicy or a mirror topology. On kafscale-3b and automq-3az every topic is diskless already; on inkless-3az the primary 'orders' stays classic. On ursa-3az it is ursa.storage.enable, chosen per topic: 'orders' is diskless unless this is false, any other topic is a disk topic unless this is true, and a diskless topic has replication factor 1. On warpstream-3az every topic is in object storage already; on redpanda-3az every topic is a cloud topic by the cluster, so disklessEnable true is refused there. On nisshi-3b every topic is kept by the storage engine already"`
 }
 
 // disklessSet reports whether a topic asks for diskless.enable=true.
 func disklessSet(t TopicShape) bool { return t.DisklessEnable != nil && *t.DisklessEnable }
 
 // topicDiskless is a topic's effective diskless choice on topo: every topic on
-// KafScale, AutoMQ and WarpStream, the primary on ursa-3az unless the shape
+// KafScale, AutoMQ, WarpStream and Nisshi, the primary on ursa-3az unless the shape
 // turns it off, and otherwise whatever the topic asks for. (On redpanda-3az
 // every topic is a cloud topic by the cluster, with no topic flag: see
 // clusterDiskless.)
@@ -134,7 +145,7 @@ type topology struct {
 	// impl is the diskless implementation the preset runs (v2.2,
 	// TEMPLATES[type].disklessImpl): "" for the KIP-1163 draft and the classic
 	// topologies, else "inkless", "kafscale", "automq", "warpstream",
-	// "redpanda" or "ursa".
+	// "redpanda", "ursa" or "nisshi".
 	impl string
 	// agentZones are the fixed zones a WarpStream preset cycles its Agents over
 	// (WARPSTREAM_ZONES, freePlayAgentZones). Past one Agent per zone the
@@ -157,17 +168,17 @@ type topology struct {
 }
 
 // topologyOrder lists the topologies in the playground's own order, for errors.
-var topologyOrder = []string{"single-dc", "active-passive", "active-active", "stretched-2-5", "stretched-3", "diskless-3az", "inkless-3az", "kafscale-3b", "automq-3az", "warpstream-3az", "redpanda-3az", "ursa-3az", "streamhouse"}
+var topologyOrder = []string{"single-dc", "active-passive", "active-active", "stretched-2-5", "stretched-3", "diskless-3az", "inkless-3az", "kafscale-3b", "automq-3az", "warpstream-3az", "redpanda-3az", "ursa-3az", "nisshi-3b", "streamhouse"}
 
 // ursaRF1Reason is URSA_RF1_REASON in the website's disklessImpl.ts: Ursa's
 // own rule for diskless topics.
 const ursaRF1Reason = "Ursa forces replication factor 1 on diskless topics; object storage holds the data"
 
 // allDiskless mirrors primaryDisklessByConstruction in freePlayTopologies.ts:
-// KafScale, AutoMQ and WarpStream have no classic topics, so every topic is
-// diskless and RF 1 (rfMaxFor), whatever the shape says.
+// KafScale, AutoMQ, WarpStream and Nisshi have no classic topics, so every
+// topic is diskless and RF 1 (rfMaxFor), whatever the shape says.
 func allDiskless(t topology) bool {
-	return t.impl == "kafscale" || t.impl == "automq" || t.impl == "warpstream"
+	return t.impl == "kafscale" || t.impl == "automq" || t.impl == "warpstream" || t.impl == "nisshi"
 }
 
 // clusterDiskless mirrors disklessByClusterConfig in freePlayTopologies.ts:
@@ -181,8 +192,20 @@ func clusterDiskless(t topology) bool { return t.impl == "redpanda" }
 const warpstreamNoReplicasReason = "WarpStream partitions have no replicas; object storage replicates the data and any Agent serves any partition."
 
 // hasCommitInterval mirrors disklessHasCommitInterval: KafScale flushes per
-// produce request, so the playground drops a commit interval there.
-func hasCommitInterval(t topology) bool { return t.impl != "kafscale" }
+// produce request and the simulator's Nisshi writes each produce request with
+// no buffer interval, so the playground drops a commit interval on both.
+func hasCommitInterval(t topology) bool { return t.impl != "kafscale" && t.impl != "nisshi" }
+
+// nisshiNoReplicasReason is NISSHI_NO_REPLICAS_REASON in the website's
+// disklessImpl.ts.
+const nisshiNoReplicasReason = "Every Nisshi broker reports itself as the only replica (node 111) and serves every partition; the storage engine holds the data."
+
+// The Nisshi maintenance interval's bounds (NISSHI_MAINTENANCE_MIN_MS /
+// NISSHI_MAINTENANCE_MAX_MS in freePlayTopologies.ts).
+const (
+	nisshiMaintenanceMinMs = 2000
+	nisshiMaintenanceMaxMs = 600000
+)
 
 var topologies = map[string]topology{
 	"single-dc":      {slug: "single-dc", zones: []string{"single"}, defaultBrokers: []int{3}, defaultPartitions: 3, defaultRF: 3, brokerCap: 10, partitionCap: 24},
@@ -238,6 +261,14 @@ var topologies = map[string]topology{
 	// caps (9 brokers, 6 partitions).
 	"redpanda-3az": {slug: "redpanda-3az", zones: []string{"single"}, defaultBrokers: []int{3}, defaultPartitions: 6, defaultRF: 3, brokerCap: 9, partitionCap: 6, impl: "redpanda"},
 	"ursa-3az":     {slug: "ursa-3az", zones: []string{"single"}, defaultBrokers: []int{3}, defaultPartitions: 3, defaultRF: 1, brokerCap: 6, partitionCap: 6, fixedTopics: []string{"payments"}, impl: "ursa", primaryDisklessDefault: true},
+	// nisshi-3b (v2.3, not released yet): three Nisshi brokers (formerly
+	// Tansu), no zones and no KRaft controllers: every broker answers as node
+	// 111, any broker serves any partition, and the storage engine holds every
+	// record, offset and group. PostgreSQL by default (actions DB:0/DB:1), S3
+	// through shape.nisshi (actions OS:0/OS:s/OS:1). Every topic is a Nisshi
+	// topic at RF 1. One to five brokers (MAX_NISSHI_FREE_PLAY_BROKERS), the
+	// shared 6-partition cap.
+	"nisshi-3b": {slug: "nisshi-3b", zones: []string{"single"}, defaultBrokers: []int{3}, defaultPartitions: 3, defaultRF: 1, brokerCap: 5, partitionCap: 6, impl: "nisshi"},
 	// v3.0 Streamhouse (release stage next): a classic single cluster with a
 	// Schema Registry, Kafka Connect and Apache Iceberg's sink connector
 	// orders-sink writing `orders` to the Iceberg table `orders`. It has the
@@ -409,6 +440,22 @@ func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam
 		return "", "", nil, fmt.Errorf("shape.topics: %d extra topics beyond the primary 'orders', the free-play cap is %d (MAX_FREE_PLAY_TOPICS)", len(extras), maxExtraTopics)
 	}
 
+	// Nisshi builds every topic at RF 1 (nisshiNormalizeConfig): the shape
+	// follows the playground and says so in a note instead of refusing.
+	if topo.impl == "nisshi" {
+		if primary != nil {
+			notes = append(notes, nisshiNormalizeTopic(primary)...)
+		}
+		for i := range extras {
+			notes = append(notes, nisshiNormalizeTopic(&extras[i])...)
+		}
+	}
+	nisshiEnc, nisshiNotes, err := encodeNisshi(topo, shape, primary, extras)
+	if err != nil {
+		return "", "", nil, err
+	}
+	notes = append(notes, nisshiNotes...)
+
 	partitions, rf := topo.defaultPartitions, topo.defaultRF
 	primaryDiskless := topo.primaryDisklessDefault || allDiskless(topo)
 	if primary != nil {
@@ -520,7 +567,11 @@ func shapeToParams(cluster string, shape *ClusterShape) (clusterParam, sizeParam
 	// playground drops the flag, so writing it would not be canonical. On Ursa
 	// the flag is what makes `orders` diskless, so it is written whenever it is.
 	primaryFlag := primaryDiskless && (topo.impl == "" || topo.impl == "ursa")
-	if disklessEnc := mapping.EncodeDisklessTail(primaryFlag, commitMs, uploadMs); disklessEnc != "" {
+	if topo.impl == "nisshi" {
+		if nisshiEnc != "" {
+			tail[17] = nisshiEnc
+		}
+	} else if disklessEnc := mapping.EncodeDisklessTail(primaryFlag, commitMs, uploadMs); disklessEnc != "" {
 		tail[17] = disklessEnc
 	}
 	if sinkEnc != "" {
@@ -702,6 +753,11 @@ func validateTopicConfig(topo topology, t TopicShape, isPrimary bool) error {
 		}
 		return nil
 	}
+	// Nisshi stores a compacted cleanup policy on any engine (applied by the
+	// PostgreSQL maintenance sweep; encodeNisshi notes it on S3).
+	if topo.impl == "nisshi" {
+		return nil
+	}
 	if allDiskless(topo) {
 		if strings.Contains(t.CleanupPolicy, "compact") {
 			return fmt.Errorf("cleanupPolicy %q: the simulator does not model compacted topics on %s, where every topic is diskless", t.CleanupPolicy, topo.slug)
@@ -746,7 +802,10 @@ func validateDisklessTiming(topo topology, dt *DisklessTimingShape, anyDiskless 
 		return nil
 	}
 	if !anyDiskless {
-		return fmt.Errorf("requires a diskless topic (disklessEnable, or a diskless preset: diskless-3az, inkless-3az, kafscale-3b, automq-3az, warpstream-3az, redpanda-3az, or ursa-3az with a diskless topic) (KIP-1163 draft, v2.0+)")
+		return fmt.Errorf("requires a diskless topic (disklessEnable, or a diskless preset: diskless-3az, inkless-3az, kafscale-3b, automq-3az, warpstream-3az, redpanda-3az, nisshi-3b, or ursa-3az with a diskless topic) (KIP-1163 draft, v2.0+)")
+	}
+	if dt.CommitIntervalMs != nil && topo.impl == "nisshi" {
+		return fmt.Errorf("commitIntervalMs: %s has no commit interval (the simulator writes each Nisshi produce request to the storage engine with no buffer interval); set uploadMs only", topo.slug)
 	}
 	if dt.CommitIntervalMs != nil && !hasCommitInterval(topo) {
 		return fmt.Errorf("commitIntervalMs: %s has no commit interval (KafScale flushes the segment per produce request); set uploadMs only", topo.slug)
