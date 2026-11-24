@@ -26,7 +26,9 @@ import (
 // Metadata (with AllowAutoTopicCreation left false, so listing a topic can
 // never create it), ListOffsets, ListGroups, DescribeGroups, OffsetFetch and
 // DescribeConfigs, plus DescribeProducers when, and only when, the caller opts
-// in with FetchOptions.Producers; franz-go itself adds the ApiVersions
+// in with FetchOptions.Producers, and one ApiVersions when, and only when,
+// Metadata lists the single broker 111 that every Nisshi broker reports
+// (checkNisshi, nisshi.go); franz-go itself adds the ApiVersions
 // handshake, the FindCoordinator lookups the group requests go through and, to
 // route DescribeProducers to each partition leader, its own Metadata lookups
 // (also with AllowAutoTopicCreation false). Every one is a
@@ -214,6 +216,16 @@ func (c *Client) FetchWith(ctx context.Context, sel Selection, opts FetchOptions
 	meta, err := metaReq.RequestWith(ctx, c.kc)
 	if err != nil {
 		return snap, nil, fmt.Errorf("metadata request: %w", err)
+	}
+
+	// Nisshi answers as node 111 from every broker, so its broker count is not
+	// in the snapshot: refuse it (nisshi.go).
+	nisshiWarning, err := c.checkNisshi(ctx, meta.Brokers)
+	if err != nil {
+		return snap, nil, err
+	}
+	if nisshiWarning != "" {
+		warnings = append(warnings, nisshiWarning)
 	}
 
 	for _, b := range meta.Brokers {

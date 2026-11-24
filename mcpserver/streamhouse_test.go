@@ -155,7 +155,7 @@ func TestShapeStreamhouseValidation(t *testing.T) {
 		{"diskless timing", "streamhouse", &ClusterShape{DisklessTiming: &DisklessTimingShape{UploadMs: intp(300)}}, []string{"shape.disklessTiming", "requires a diskless topic"}},
 		{"too many brokers", "streamhouse", &ClusterShape{Brokers: 10}, []string{"10 total brokers", "cap of 9"}},
 		{"too many partitions", "streamhouse", &ClusterShape{Topics: []TopicShape{{Name: "orders", Partitions: 7, ReplicationFactor: 3}}}, []string{"partitions 7", "cap of 6"}},
-		{"unknown cluster lists it", "streamhous", nil, []string{"automq-3az, warpstream-3az, redpanda-3az, ursa-3az, streamhouse"}},
+		{"unknown cluster lists it", "streamhous", nil, []string{"automq-3az, warpstream-3az, redpanda-3az, ursa-3az, nisshi-3b, streamhouse"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			_, _, _, err := shapeToParams(c.cluster, c.shape)

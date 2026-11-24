@@ -402,11 +402,13 @@ func TestOpenScenario(t *testing.T) {
 	// 08.2.1-08.2.7 (the playground opens a retired 08.1.2-08.1.5 link as its
 	// 2.0 counterpart), and at release stage next the WarpStream scenarios
 	// 10.1.1-10.1.7, the Redpanda Cloud Topics scenarios 11.1.1-11.1.5 and the
-	// Ursa for Kafka scenarios 13.1.1-13.1.5.
+	// Ursa for Kafka scenarios 13.1.1-13.1.5, and at v2.3 (not released yet)
+	// the Nisshi scenarios 12.1.1-12.1.7.
 	for _, id := range []string{
 		"08.1.1", "08.2.1", "08.2.2", "08.2.3", "08.2.4", "08.2.5", "08.2.6", "08.2.7",
 		"10.1.1", "10.1.2", "10.1.3", "10.1.4", "10.1.5", "10.1.6", "10.1.7",
 		"11.1.1", "11.1.2", "11.1.3", "11.1.4", "11.1.5",
+		"12.1.1", "12.1.2", "12.1.3", "12.1.4", "12.1.5", "12.1.6", "12.1.7",
 		"13.1.1", "13.1.2", "13.1.3", "13.1.4", "13.1.5",
 	} {
 		res := callTool(t, s, "open_scenario", map[string]any{"scenarioId": id})

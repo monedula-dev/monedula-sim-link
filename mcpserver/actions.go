@@ -253,8 +253,8 @@ func toEntry(i int, a ActionInput) (actionlog.Entry, error) {
 		}
 		action = actionlog.SetSREligibility{InstanceID: a.InstanceID, Eligible: *a.Eligible}
 	// v2.2 diskless control planes. No fields: they act on the cluster's one
-	// PostgreSQL (inkless-3az) or etcd (kafscale-3b) and are a
-	// no-op elsewhere.
+	// PostgreSQL (inkless-3az, and v2.3 the PostgreSQL storage engine of
+	// nisshi-3b) or etcd (kafscale-3b) and are a no-op elsewhere.
 	case "stop_coordinator_db":
 		action = actionlog.StopCoordinatorDB{}
 	case "start_coordinator_db":
@@ -272,8 +272,9 @@ func toEntry(i int, a ActionInput) (actionlog.Entry, error) {
 		action = actionlog.StartControlPlane{}
 	// v2.2 diskless object storage. No fields: they act on the bucket of every
 	// diskless implementation and are a no-op without diskless topics. On
-	// ursa-3az and warpstream-3az the playground refuses stop and slow
-	// (ursaActionChecks, warpstreamActionChecks).
+	// ursa-3az, warpstream-3az and nisshi-3b with the PostgreSQL engine the
+	// playground refuses stop and slow (ursaActionChecks,
+	// warpstreamActionChecks, nisshiActionChecks).
 	case "stop_object_storage":
 		action = actionlog.StopObjectStorage{}
 	case "slow_object_storage":
@@ -282,7 +283,8 @@ func toEntry(i int, a ActionInput) (actionlog.Entry, error) {
 		action = actionlog.StartObjectStorage{}
 	// v2.2 KafScale broker pause / resume (SIGSTOP / SIGCONT), and v2.3 Ursa's
 	// (ursa-3az, refused for a broker holding a disk-topic replica,
-	// ursaActionChecks): a no-op on any other cluster.
+	// ursaActionChecks): a no-op on any other cluster, and refused on nisshi-3b
+	// (nisshiActionChecks).
 	case "pause_broker":
 		if err := need("brokerId", a.BrokerID); err != nil {
 			return actionlog.Entry{}, err

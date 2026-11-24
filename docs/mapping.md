@@ -421,7 +421,7 @@ cluster:
 
 | Action kind | Code | Notes |
 |---|---|---|
-| `stop_coordinator_db` / `start_coordinator_db` | `DB:0` / `DB:1` | the Inkless PostgreSQL batch coordinator (`inkless-3az`) |
+| `stop_coordinator_db` / `start_coordinator_db` | `DB:0` / `DB:1` | the Inkless PostgreSQL batch coordinator (`inkless-3az`), and from v2.3 the PostgreSQL storage engine of `nisshi-3b` (see *Nisshi* below) |
 | `stop_etcd` / `start_etcd` | `ET:0` / `ET:1` | KafScale's etcd, which holds the metadata and partition leases (`kafscale-3b`) |
 | `stop_control_plane` / `start_control_plane` | `CP:0` / `CP:1` | v2.3, `next`: WarpStream's hosted control plane (`warpstream-3az`; see below) |
 
@@ -592,6 +592,77 @@ stage `next`: 13.1.1 the write path, 13.1.2 zones and the zonal owner, 13.1.3
 from WAL to Parquet, 13.1.4 a broker dies and a broker goes silent, 13.1.5
 diskless and disk topics side by side.
 
+## Nisshi: `nisshi-3b` (v2.3, not released yet)
+
+The simulator's v2.3 adds Nisshi (formerly Tansu), which is not released yet:
+the public playground does not offer the `freeplay.nisshi` feature and opens
+`cluster=nisshi-3b` as single-dc. `connect` never emits it, and refuses a live
+Nisshi cluster (see *What is NOT represented*). The MCP `build_playground_url`
+tool takes `cluster: "nisshi-3b"`:
+
+| `cluster` | Default `size` | What it opens |
+|---|---|---|
+| `nisshi-3b` | `3x3x1` | 3 Nisshi brokers, no zones and no KRaft controllers. Every broker answers as node 111, the leader and only replica of every partition, so any broker serves any request; the storage engine holds every record, offset and group. `orders` has 3 partitions at replication factor 1. Producer `p-orders` (orders, `acks=all`, idempotent) and group `g-orders` with member `c1` read and write through different brokers. The engine is PostgreSQL (one transaction per write, holding the partition's watermark row lock; a maintenance sweep every 10 s applies retention and compaction) unless the shape picks S3 (a conditional write of the partition's `watermark.json`, then the batch as its own object; Nisshi's docs call the engine experimental). |
+
+The shape's `nisshi` object picks the engine, written into tail index 17 the
+way the simulator's codec writes it:
+
+| Field | Values | Slug |
+|---|---|---|
+| `nisshi.engine` | `postgres` (default) or `s3` | `s` for S3 (`3x3x1xxxxxxxxxxxxxxxxxxs`); nothing for PostgreSQL |
+| `nisshi.maintenanceMs` | 2000-600000, PostgreSQL only (the preset's 10000 when unset; Nisshi's own default is 600000) | `m<ms>` after the timing (`3x3x1xxxxxxxxxxxxxxxxxxm30000`) |
+| `disklessTiming.uploadMs` | 100-5000 | `.<ms>` after the `s` (`3x3x1xxxxxxxxxxxxxxxxxxs.900`): the S3 engine's batch PUT. On PostgreSQL the slug keeps it, as the playground does, and a note says the engine does not use it |
+
+Every topic is a Nisshi topic: an extra topic carries the diskless `~1` without
+asking, and the primary diskless flag `d` is never written. Following the
+playground rather than refusing, a replication factor above 1 is built as 1
+(with `min.insync.replicas` 1), and a note quotes the simulator: "Every Nisshi
+broker reports itself as the only replica (node 111) and serves every
+partition; the storage engine holds the data." A compacted cleanup policy is
+taken on either engine; on S3 a note says it is stored but not applied (only
+Nisshi's PostgreSQL and SQLite engines apply retention and compaction). The
+shape refuses:
+
+- `nisshi.maintenanceMs` with the S3 engine (it runs no maintenance sweep) or
+  outside 2000-600000, and an engine other than `postgres` or `s3`;
+- `disklessTiming.commitIntervalMs` (the simulator writes each Nisshi produce
+  request to the storage engine with no buffer interval);
+- more than 5 brokers or 6 partitions per topic;
+- `nisshi` on any other cluster.
+
+The storage engine is stopped and started with the existing codes: on
+PostgreSQL `stop_coordinator_db` / `start_coordinator_db` (`DB:0` / `DB:1`), on
+S3 `stop_object_storage`, `slow_object_storage` and `start_object_storage`
+(`OS:0`, `OS:s`, `OS:1`). While the engine is down, group requests and offset
+commits answer COORDINATOR_NOT_AVAILABLE, since the engine holds the groups and
+offsets. A `DB` code on S3 and `start_object_storage`
+on PostgreSQL do nothing, and a note says so. The playground's engine refuses
+some actions on `nisshi-3b` (it logs `admin_rejected`, or `config_rejected` for
+a config change, and changes nothing), and `build_playground_url` refuses them
+up front with the engine's copy:
+
+| Action | Refused when | Engine copy |
+|---|---|---|
+| `pause_broker` | always | A Nisshi broker keeps no state, so a paused one only makes its clients time out; the simulator does not model pausing a Nisshi broker. |
+| `stop_object_storage`, `slow_object_storage` | the engine is PostgreSQL | Nisshi's PostgreSQL engine keeps every record in PostgreSQL, not in object storage: stop PostgreSQL instead. |
+| `reassign_partition` | always | Every Nisshi broker reports itself as the only replica (node 111) and serves every partition; the storage engine holds the data. |
+| `change_replication_factor` | the target is above 1 (a target of 1 changes nothing) | the same |
+| `add_share_group` | always | Nisshi has no share group APIs (KIP-932). |
+| `config_change` `topics.<t>.partitions` | the value is above the topic's partition count in the shape | Nisshi does not implement CreatePartitions, so a topic keeps its partition count (UNSUPPORTED_VERSION). |
+| `config_change` `topics.<t>.remoteStorageEnable` / `disklessEnable` | `true` / any value | Nisshi has one kind of topic; its storage engine holds every record. |
+
+The engine also refuses network partitions and transactional producers on
+Nisshi (a producer with a `transactional.id` stops with
+TRANSACTIONAL_ID_AUTHORIZATION_FAILED); sim-link has no action kind for a
+network partition and none that makes a producer transactional. The slugs are
+pinned by the `SIZE-IMPL nisshi-3b` lines in `mapping/testdata/ts-fixtures.txt`,
+dumped from the simulator's codec.
+
+`open_scenario` takes the Nisshi track, 12.1.1-12.1.7, also at v2.3: 12.1.1 the
+write path, 12.1.2 on PostgreSQL: one transaction per write, 12.1.3 two
+brokers, one partition, 12.1.4 reading through another broker, 12.1.5 a broker
+dies, 12.1.6 PostgreSQL unavailable, 12.1.7 what it refuses.
+
 ## Streamhouse: `IO`/`KCW`/`RCW`/`RCN` and the Connect sink (v3.0, `next`)
 
 Simulator v3.0 adds the Streamhouse free-play cluster: a classic Kafka cluster
@@ -720,3 +791,13 @@ raw-DEFLATE layout this tool emits and its own lz-string layout (see
 - **Real leadership.** See the placement approximation note.
 - **Live traffic.** The snapshot is a point in time; the URL replays a static
   reconstruction, not a stream.
+- **A Nisshi cluster.** Every Nisshi broker reports itself as node 111 in
+  Metadata, the leader and only replica of every partition, so a snapshot sees
+  one broker whatever the cluster runs and cannot tell which broker answered.
+  When Metadata lists that single broker 111, the snapshot sends one more
+  ApiVersions request: Nisshi offers no CreatePartitions (API key 37), every
+  Kafka broker since 1.0 does. For Nisshi, `connect` and `cluster_to_url` stop
+  with an error (`snapshot.ErrNisshi`) that points at `build_playground_url`
+  with `cluster: "nisshi-3b"` and `shape.brokers` set to the broker count. A
+  Kafka broker with `node.id` 111 is mapped as usual; if the ApiVersions
+  request fails, it is mapped as a Kafka broker with a warning.
